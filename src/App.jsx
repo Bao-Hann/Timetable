@@ -782,6 +782,34 @@ export default function App() {
             {arrangeFeedback && <p aria-live="polite" className="mt-3 rounded-lg px-3 py-2.5 text-[11px] leading-[1.8]" style={{ color: theme.text, backgroundColor: theme.subtle }}>{arrangeFeedback}</p>}
             <p className="mt-3 text-[10px] leading-[1.8]" style={{ color: theme.muted }}>Ưu tiên công việc quan trọng, tránh trùng lịch và chừa 15 phút nghỉ khi có thể. Gợi ý sẽ chờ bạn duyệt.</p>
           </section>
+          <section aria-label="Dự định tương lai" className="rounded-2xl border px-5 py-6 sm:px-7" style={{ borderColor: theme.line, backgroundColor: theme.panel }}>
+            <p className="text-[9px] uppercase tracking-[.2em]" style={{ color: theme.muted }}>Ý tưởng cho ngày mai</p>
+            <h2 className="mt-2 font-serif text-[25px] tracking-[-.04em]">Dự định tương lai.</h2>
+            <p className="mt-2 text-[11px] leading-relaxed" style={{ color: theme.muted }}>Lưu ý tưởng chưa cần xếp lịch, không chiếm giờ của bạn.</p>
+            <form onSubmit={saveFuturePlan} className="mt-5 space-y-4">
+              <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Tên dự định</span><input required maxLength={160} value={planDraft.title} onChange={(e) => setPlanDraft((p) => ({ ...p, title: e.target.value }))} placeholder="Ví dụ: Học nhiếp ảnh" className={inputBase} style={{ color: theme.text, borderColor: theme.line }} /></label>
+              <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ngày dự kiến (không bắt buộc)</span><input type="date" value={planDraft.targetDate} onChange={(e) => setPlanDraft((p) => ({ ...p, targetDate: e.target.value }))} className={inputBase} style={{ color: theme.text, borderColor: theme.line }} /></label>
+              <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ghi chú dự định</span><textarea rows={3} maxLength={5000} value={planDraft.note} onChange={(e) => setPlanDraft((p) => ({ ...p, note: e.target.value }))} placeholder="Mục tiêu, ý tưởng, tài liệu..." className={inputBase + ' resize-y'} style={{ color: theme.text, borderColor: theme.line }} /></label>
+              <div className="flex gap-2">
+                <button type="submit" className="flex-1 rounded-lg px-4 py-3 text-[11px] transition-opacity hover:opacity-75" style={{ backgroundColor: theme.accent, color: theme.page }}>{editingPlan ? 'Lưu dự định' : 'Lưu ý tưởng'}</button>
+                {editingPlan && <button type="button" onClick={() => { setEditingPlan(null); setPlanDraft({ title: '', note: '', targetDate: '' }); }} className="rounded-lg border px-3 text-[11px]" style={{ borderColor: theme.line }}>Hủy sửa</button>}
+              </div>
+            </form>
+            <div className="mt-5 space-y-3">
+              {futurePlans.map((plan) => <article key={plan.id} className="border-t pt-3" style={{ borderColor: theme.line }}>
+                <div className="flex justify-between gap-2"><h3 className="break-words text-[12px] font-medium">{plan.title}</h3>
+                  <div className="flex gap-1">
+                    <button type="button" onClick={() => startEditPlan(plan)} aria-label={`Sửa dự định ${plan.title}`} className="p-1" style={{ color: theme.muted }}><Pencil size={14}/></button>
+                    <button type="button" onClick={() => { if (window.confirm('Xóa dự định này?')) setFuturePlans((prev) => prev.filter((p) => p.id !== plan.id)); }} aria-label={`Xóa dự định ${plan.title}`} className="p-1" style={{ color: theme.muted }}><Trash2 size={14}/></button>
+                  </div>
+                </div>
+                {plan.targetDate && <p className="mt-1 text-[10px]" style={{ color: theme.muted }}>Dự kiến: {plan.targetDate.split('-').reverse().join('/')}</p>}
+                {plan.note && <p className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed" style={{ color: theme.muted }}>{plan.note}</p>}
+              </article>)}
+              {!futurePlans.length && <p className="py-3 text-[11px] italic" style={{ color: theme.muted }}>Chưa có dự định nào. Hãy giữ một ý tưởng ở đây.</p>}
+            </div>
+          </section>
+          <button type="button" onClick={downloadBackup} className="inline-flex items-center gap-2 px-1 text-[10px] underline underline-offset-4 transition-opacity hover:opacity-60" style={{ color: theme.muted }}><Download size={13} /> Tải bản sao lịch và ghi chú (JSON)</button>
           <button type="button" onClick={clearAll} className="inline-flex items-center gap-2 px-1 text-[10px] underline underline-offset-4 transition-opacity hover:opacity-60" style={{ color: theme.muted }}><Trash2 size={12} /> Làm trống toàn bộ lịch</button>
         </aside>
 
@@ -799,6 +827,39 @@ export default function App() {
           <div className="mt-8 flex items-center gap-3 border-t pt-6 text-[11px]" style={{ borderColor: theme.line, color: theme.muted }}><Coffee size={15} /> Đủ đầy, nhưng không cần vội vàng.</div>
         </main>
       </div>
+      {editingTask && <div role="presentation" className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4">
+        <section role="dialog" aria-modal="true" aria-label="Sửa công việc" className="w-full max-w-lg rounded-xl border p-6 shadow-2xl" style={{ backgroundColor: theme.panel, color: theme.text, borderColor: theme.line }}>
+          <div className="flex items-start justify-between"><h2 className="font-serif text-[25px]">Sửa công việc</h2><button type="button" onClick={() => setEditingTask(null)} aria-label="Đóng chỉnh sửa"><X size={18}/></button></div>
+          <p className="mt-2 text-[11px]" style={{ color: theme.muted }}>{editingTask.waiting ? 'Sửa một việc trong Waiting List.' : 'Chỉ sửa buổi đang chọn. Lịch học và các buổi khác giữ nguyên.'}</p>
+          <form onSubmit={saveEditedTask} className="mt-5 space-y-4">
+            <label className="block"><span className="text-[10px]">Tên công việc</span><input required maxLength={160} value={editingTask.title} onChange={(e) => setEditingTask((p) => ({ ...p, title: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text }} /></label>
+            <label className="block"><span className="text-[10px]">Nhóm</span><select value={editingTask.category} disabled={!editingTask.waiting && scheduledTasks.some((task) => task.id === editingTask.id && task.repeatGroupId)} onChange={(e) => setEditingTask((p) => ({ ...p, category: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text, backgroundColor: theme.panel }}>{GROUPS.filter((g) => g.id !== 'school' || !editingTask.waiting).map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}</select></label>
+            <label className="block"><span className="text-[10px]">Ghi chú</span><textarea rows={3} maxLength={5000} value={editingTask.note} onChange={(e) => setEditingTask((p) => ({ ...p, note: e.target.value }))} className={inputBase + ' resize-y'} style={{ borderColor: theme.line, color: theme.text }} /></label>
+            {editingTask.waiting ? <>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block"><span className="text-[10px]">Thời lượng (phút)</span><input type="number" min={5} max={600} value={editingTask.estimatedDuration} onChange={(e) => setEditingTask((p) => ({ ...p, estimatedDuration: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text }} /></label>
+                <label className="block"><span className="text-[10px]">Ưu tiên</span><select value={editingTask.priority} onChange={(e) => setEditingTask((p) => ({ ...p, priority: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text, backgroundColor: theme.panel }}><option value="high">Quan trọng</option><option value="normal">Bình thường</option><option value="low">Có thể để sau</option></select></label>
+              </div>
+              {floatingTasks.some((t) => t.id === editingTask.id && t.skillWeekStart) && <label className="block"><span className="text-[10px]">Một ngày thuộc tuần luyện kỹ năng</span><input type="date" value={editingTask.date} onChange={(e) => setEditingTask((p) => ({ ...p, date: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text }} /></label>}
+            </> : <>
+              <label className="block"><span className="text-[10px]">Ngày thực hiện</span><input type="date" value={editingTask.date} onChange={(e) => setEditingTask((p) => ({ ...p, date: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text }} /></label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block"><span className="text-[10px]">Bắt đầu</span><input type="time" value={editingTask.startTime} onChange={(e) => setEditingTask((p) => ({ ...p, startTime: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text }} /></label>
+                <label className="block"><span className="text-[10px]">Kết thúc</span><input type="time" value={editingTask.endTime} onChange={(e) => setEditingTask((p) => ({ ...p, endTime: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text }} /></label>
+              </div>
+            </>}
+            {editError && <p role="alert" className="text-[11px]" style={{ color: theme.leadership }}>{editError}</p>}
+            <div className="flex justify-end gap-2 pt-3"><button type="button" onClick={() => setEditingTask(null)} className="rounded-lg border px-4 py-2.5 text-[11px]" style={{ borderColor: theme.line }}>Hủy</button><button type="submit" className="rounded-lg px-4 py-2.5 text-[11px]" style={{ backgroundColor: theme.accent, color: theme.page }}>Lưu thay đổi</button></div>
+          </form>
+        </section>
+      </div>}
+      {editingNoteTask && <div role="presentation" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <section role="dialog" aria-modal="true" aria-label="Ghi chú công việc" className="w-full max-w-lg rounded-xl border p-6 shadow-2xl" style={{ backgroundColor: theme.panel, color: theme.text, borderColor: theme.line }}>
+          <div className="flex justify-between gap-3"><h2 className="font-serif text-[24px]">Ghi chú · {editingNoteTask.title}</h2><button type="button" aria-label="Đóng ghi chú" onClick={() => setEditingNoteTask(null)}><X size={18}/></button></div>
+          <label className="mt-5 block"><span className="text-[11px]" style={{ color: theme.muted }}>Nội dung ghi chú</span><textarea rows={6} maxLength={5000} value={noteText} onChange={(e) => setNoteText(e.target.value)} className={inputBase + ' resize-y'} style={{ color: theme.text, borderColor: theme.line }} /></label>
+          <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setEditingNoteTask(null)} className="rounded-lg border px-4 py-2 text-[11px]" style={{ borderColor: theme.line }}>Hủy</button><button type="button" onClick={saveNote} className="rounded-lg px-4 py-2 text-[11px]" style={{ backgroundColor: theme.accent, color: theme.page }}>Lưu ghi chú</button></div>
+        </section>
+      </div>}
       <footer className="mt-16 flex flex-wrap items-center justify-between gap-3 border-t pt-6 text-[10px]" style={{ borderColor: theme.line, color: theme.muted }}><span className="inline-flex items-center gap-2"><Flower2 size={14} /> Nhịp — sống chậm giữa những điều quan trọng.</span><span>Gợi ý xếp lịch dựa trên quy tắc · Dữ liệu lưu trên thiết bị này</span></footer>
     </div>
   </div>;
