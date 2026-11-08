@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight, CalendarDays, Check, CheckCheck, ChevronLeft, ChevronRight,
-  Clock3, Coffee, Flower2, Leaf, Plus, RotateCcw, Sparkles, Trash2,
+  Clock3, Coffee, Download, Flower2, Leaf, NotebookPen, Plus, RotateCcw, Sparkles, Trash2,
   WandSparkles, Wind, X,
 } from 'lucide-react';
 
@@ -63,6 +63,7 @@ const DAY_START = 8 * 60;
 const DAY_END = 22 * 60;
 const REST_BUFFER = 15;
 const SCHOOL_WEEKS = 8;
+const MAX_SKILL_SESSIONS = 7;
 const PRIORITY = { high: 0, normal: 1, low: 2 };
 const inputBase = 'w-full min-w-0 rounded-none border-0 border-b bg-transparent pb-2 pt-2 text-[13px] outline-none transition-colors duration-300 focus:border-[var(--accent)]';
 const displayDate = (d) => new Intl.DateTimeFormat('vi-VN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(d);
@@ -133,7 +134,36 @@ export function createWeeklyClassSeries(input, scheduledTasks, createId = makeId
   return dates.map((date, index) => ({
     id: createId(), repeatGroupId, repeatIndex: index + 1, repeatTotal: SCHOOL_WEEKS,
     date, startTime: input.startTime, endTime: input.endTime,
-    title: input.title, category: 'school', origin: 'fixed', status: 'approved',
+    title: input.title, note: input.note || '', category: 'school', origin: 'fixed', status: 'approved',
+  }));
+}
+
+/** Thứ Hai của tuần chứa ngày được chọn, không kéo dài sang tuần tiếp theo. */
+export function startOfWeekKey(dateKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey ?? '')) throw new Error('Ngày trong tuần không hợp lệ.');
+  const day = fromIso(dateKey);
+  if (isoDate(day) !== dateKey) throw new Error('Ngày trong tuần không tồn tại.');
+  day.setDate(day.getDate() - ((day.getDay() + 6) % 7));
+  return isoDate(day);
+}
+
+/** Số buổi luyện tập được ghi vào Waiting List của duy nhất một tuần. */
+export function createSkillSessions(input, createId = makeId) {
+  const times = Number(input.timesPerWeek);
+  const duration = Number(input.duration);
+  if (!Number.isInteger(times) || times < 1 || times > MAX_SKILL_SESSIONS) {
+    throw new Error('Số buổi luyện kỹ năng phải từ 1 đến 7 buổi mỗi tuần.');
+  }
+  if (!Number.isInteger(duration) || duration < 5 || duration > 600) {
+    throw new Error('Thời lượng mỗi buổi phải từ 5 đến 600 phút.');
+  }
+  const weekStart = startOfWeekKey(input.date);
+  const skillSeriesId = createId();
+  return Array.from({ length: times }, (_, index) => ({
+    id: createId(), title: input.title, note: input.note || '',
+    category: input.category === 'school' ? 'academic' : input.category,
+    estimatedDuration: duration, priority: input.priority,
+    skillWeekStart: weekStart, skillSeriesId, skillIndex: index + 1, skillTotal: times,
   }));
 }
 
@@ -155,7 +185,7 @@ const createExamples = () => {
     { id: 'example-float-3', title: 'Luyện đàn Piano', category: 'art', estimatedDuration: 45, priority: 'normal' },
     { id: 'example-float-4', title: 'Đọc tài liệu nghiên cứu', category: 'academic', estimatedDuration: 60, priority: 'normal' },
   ];
-  return { fixedTasks, floatingTasks, scheduledTasks: [...fixedTasks], currentTheme: 'zen' };
+  return { fixedTasks, floatingTasks, scheduledTasks: [...fixedTasks], futurePlans: [], currentTheme: 'zen' };
 };
 function readSaved() {
   try {
@@ -163,7 +193,7 @@ function readSaved() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed.fixedTasks) && Array.isArray(parsed.floatingTasks) && Array.isArray(parsed.scheduledTasks)) {
-        return { ...parsed, currentTheme: THEMES[parsed.currentTheme] ? parsed.currentTheme : 'zen' };
+        return { ...parsed, futurePlans: Array.isArray(parsed.futurePlans) ? parsed.futurePlans : [], currentTheme: THEMES[parsed.currentTheme] ? parsed.currentTheme : 'zen' };
       }
     }
   } catch { /* Không để lỗi trình duyệt chặn giao diện. */ }
@@ -183,7 +213,11 @@ export function autoScheduleTasks(floatingTasks, scheduledTasks, selectedDate, s
     .map((item) => ({ start: toMinutes(item.startTime), end: toMinutes(item.endTime) }))
     .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start);
 
-  const ordered = [...floatingTasks].sort((a, b) => (PRIORITY[a.priority] ?? 1) - (PRIORITY[b.priority] ?? 1));
+  const selectedWeek = startOfWeekKey(selectedDate);
+  const reservedSkillGroups = new Set(scheduledTasks.filter((item) => item.date === selectedDate && item.skillSeriesId).map((item) => item.skillSeriesId));
+  const ordered = floatingTasks
+    .filter((item) => !item.skillWeekStart || item.skillWeekStart === selectedWeek)
+    .sort((a, b) => (PRIORITY[a.priority] ?? 1) - (PRIORITY[b.priority] ?? 1));
   const placed = [];
   const placedIds = new Set();
 
@@ -204,6 +238,7 @@ export function autoScheduleTasks(floatingTasks, scheduledTasks, selectedDate, s
   }
 
   for (const task of ordered) {
+    if (task.skillSeriesId && reservedSkillGroups.has(task.skillSeriesId)) continue;
     const duration = Number(task.estimatedDuration);
     if (!Number.isInteger(duration) || duration <= 0 || duration > end - start) continue;
     let position = nextSlot(duration, buffer);
@@ -215,7 +250,37 @@ export function autoScheduleTasks(floatingTasks, scheduledTasks, selectedDate, s
     };
     placed.push(next);
     placedIds.add(task.id);
+    if (task.skillSeriesId) reservedSkillGroups.add(task.skillSeriesId);
     reserved.push({ start: position, end: position + duration });
+  }
+  return { placed, remaining: floatingTasks.filter((task) => !placedIds.has(task.id)) };
+}
+
+/** Tìm chỗ cho các buổi kỹ năng trong DUY NHẤT tuần đã chọn, ưu tiên trải đều ngày. */
+export function autoArrangeSkillWeek(floatingTasks, scheduledTasks, dayInWeek) {
+  const start = startOfWeekKey(dayInWeek);
+  const weekDays = Array.from({ length: 7 }, (_, index) => {
+    const day = fromIso(start);
+    day.setDate(day.getDate() + index);
+    return isoDate(day);
+  });
+  const eligible = floatingTasks
+    .filter((task) => task.skillSeriesId && task.skillWeekStart === start)
+    .sort((a, b) => (PRIORITY[a.priority] ?? 1) - (PRIORITY[b.priority] ?? 1) || a.skillIndex - b.skillIndex);
+  const placed = [];
+  const placedIds = new Set();
+  for (const task of eligible) {
+    const ideal = Math.round((task.skillIndex * 8 / (task.skillTotal + 1)) - 1);
+    const dayOrder = weekDays
+      .map((date, index) => ({ date, index }))
+      .sort((a, b) => Math.abs(a.index - ideal) - Math.abs(b.index - ideal) || a.index - b.index);
+    for (const candidate of dayOrder) {
+      const result = autoScheduleTasks([task], [...scheduledTasks, ...placed], candidate.date);
+      if (!result.placed.length) continue;
+      placed.push(...result.placed);
+      placedIds.add(task.id);
+      break;
+    }
   }
   return { placed, remaining: floatingTasks.filter((task) => !placedIds.has(task.id)) };
 }
@@ -343,12 +408,15 @@ export default function App() {
   const [floatingTasks, setFloatingTasks] = useState(initial.floatingTasks);
   const [scheduledTasks, setScheduledTasks] = useState(initial.scheduledTasks);
   const [currentTheme, setCurrentTheme] = useState(initial.currentTheme);
+  const [futurePlans, setFuturePlans] = useState(initial.futurePlans);
   const [selectedDate, setSelectedDate] = useState(() => isoDate(new Date()));
   const [visibleMonth, setVisibleMonth] = useState(() => { const now = new Date(); return isoDate(new Date(now.getFullYear(), now.getMonth(), 1, 12)); });
   const [arrangeFeedback, setArrangeFeedback] = useState('');
   const timelineRef = useRef(null);
   const [mode, setMode] = useState('floating');
-  const [draft, setDraft] = useState({ title: '', category: 'academic', duration: '45', priority: 'normal', date: isoDate(new Date()), startTime: '09:00', endTime: '10:00' });
+  const [planDraft, setPlanDraft] = useState({ title: '', note: '', targetDate: '' });
+  const [editingPlan, setEditingPlan] = useState(null);
+  const [draft, setDraft] = useState({ title: '', note: '', category: 'academic', duration: '45', timesPerWeek: '3', priority: 'normal', date: isoDate(new Date()), startTime: '09:00', endTime: '10:00' });
   const [message, setMessage] = useState('');
   const [noticeIsError, setNoticeIsError] = useState(false);
   const [storageError, setStorageError] = useState(false);
@@ -362,9 +430,9 @@ export default function App() {
   const approvedCount = allToday.filter((item) => item.status === 'approved').length;
 
   useEffect(() => {
-    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ fixedTasks, floatingTasks, scheduledTasks, currentTheme })); setStorageError(false); }
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ fixedTasks, floatingTasks, scheduledTasks, futurePlans, currentTheme })); setStorageError(false); }
     catch { setStorageError(true); }
-  }, [fixedTasks, floatingTasks, scheduledTasks, currentTheme]);
+  }, [fixedTasks, floatingTasks, scheduledTasks, futurePlans, currentTheme]);
 
   const say = (text, error = false) => { setMessage(text); setNoticeIsError(error); };
   const reportForm = (text, error = false) => {
