@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import React from 'react'
-import App, { THEMES, autoScheduleTasks, autoArrangeSkillWeek, createSkillSessions, startOfWeekKey, getMonthGrid, summarizeMonth, weeklyClassDates, createWeeklyClassSeries } from './App.jsx'
+import App, { THEMES, AUTO_BLOCKED_PERIODS, reflowForFixedTasks, autoScheduleTasks, autoArrangeSkillWeek, createSkillSessions, startOfWeekKey, getMonthGrid, summarizeMonth, weeklyClassDates, createWeeklyClassSeries } from './App.jsx'
 
 const date = '2026-11-08'
 const fixed = (id, startTime, endTime, day = date) => ({ id, date: day, startTime, endTime, origin: 'fixed', status: 'approved' })
@@ -279,5 +279,100 @@ describe('weekly skill practice and safe task edits', () => {
     expect(saved.floatingTasks.find(t => t.title === 'Ôn từ vựng mới').estimatedDuration).toBe(25)
     expect(saved.futurePlans).toHaveLength(1)
     expect(saved.scheduledTasks.some(t => t.title === 'Học vẽ')).toBe(false)
+  })
+})
+
+describe('daily protected hours and automatic adjustments', () => {
+  const overlaps = (a, from, to) => a.startTime < to && a.endTime > from
+  it('never arranges inside 12:00–14:00 or 17:00–19:00, even without existing tasks', () => {
+    expect(AUTO_BLOCKED_PERIODS).toEqual([{ start: 720, end: 840 }, { start: 1020, end: 1140 }])
+    const waiting = Array.from({ length: 12 }, (_, i) => floating('slot-' + i, 60))
+    const result = autoScheduleTasks(waiting, [], date)
+    expect(result.placed.length).toBeGreaterThan(0)
+    for (const task of result.placed) {
+      expect(overlaps(task, '12:00', '14:00')).toBe(false)
+      expect(overlaps(task, '17:00', '19:00')).toBe(false)
+    }
+    expect(result.placed.length + result.remaining.length).toBe(waiting.length)
+  })
+
+  it('keeps a task in Waiting List when protected hours leave no adequate gap', () => {
+    const reserved = [
+      fixed('morning', '08:00', '12:00'),
+      fixed('afternoon', '14:00', '17:00'),
+      fixed('evening', '19:00', '22:00'),
+    ]
+    const result = autoScheduleTasks([floating('blocked', 30)], reserved, date)
+    expect(result.placed).toHaveLength(0)
+    expect(result.remaining.map(task => task.id)).toEqual(['blocked'])
+  })
+
+  it('automatically relocates overlapping suggested tasks after a new fixed event', () => {
+    const auto = { ...floating('auto', 60), date, startTime: '09:00', endTime: '10:00', status: 'pending', origin: 'floating' }
+    const fixedTask = fixed('class', '09:15', '10:45')
+    const result = reflowForFixedTasks([auto], [], [fixedTask])
+    expect(result.moved).toBe(1)
+    expect(result.requeued).toBe(0)
+    expect(result.scheduledTasks).toHaveLength(2)
+    expect(result.scheduledTasks.find(x => x.id === 'auto').status).toBe('pending')
+    const moved = result.scheduledTasks.find(x => x.id === 'auto')
+    expect(overlaps(moved, '09:15', '10:45')).toBe(false)
+    expect(overlaps(moved, '12:00', '14:00')).toBe(false)
+    expect(overlaps(moved, '17:00', '19:00')).toBe(false)
+  })
+
+  it('preserves scheduled work not in conflict and all notes and approved statuses', () => {
+    const kept = { ...floating('untouched', 30), origin: 'floating', date, startTime: '08:00', endTime: '08:30', status: 'approved', note: 'Important note' }
+    const clashing = { ...floating('clashing', 45), origin: 'floating', date, startTime: '17:10', endTime: '17:55', status: 'approved', note: 'Practice' }
+    const result = reflowForFixedTasks([kept, clashing], [], [fixed('new', '11:00', '12:00')])
+    expect(result.scheduledTasks.find(x => x.id === 'untouched')).toEqual(kept)
+    const second = result.scheduledTasks.find(x => x.id === 'clashing')
+    expect(second.status).toBe('approved')
+    expect(second.note).toBe('Practice')
+    expect(overlaps(second, '17:00', '19:00')).toBe(false)
+  })
+
+  it('returns impossible work to Waiting List without losing id, title, note, and duration', () => {
+    const old = { ...floating('needs-relocation', 90), title: 'Luyện nói', note: 'Bài số 2', origin: 'floating',
+      date, startTime: '09:00', endTime: '10:30', status: 'pending' }
+    const added = [
+      fixed('a', '08:00', '12:00'), fixed('b', '14:00', '17:00'), fixed('c', '19:00', '22:00')
+    ]
+    const result = reflowForFixedTasks([old], [], added)
+    expect(result.moved).toBe(0)
+    expect(result.requeued).toBe(1)
+    expect(result.scheduledTasks).toEqual(added)
+    expect(result.floatingTasks[0]).toMatchObject({ id: old.id, title: 'Luyện nói', note: 'Bài số 2', estimatedDuration: 90 })
+    expect(result.floatingTasks[0].date).toBeUndefined()
+  })
+
+  it('keeps unrelated dates unchanged when adding an eight-week series', () => {
+    const existing = { ...floating('later', 45), origin: 'floating', date: '2027-02-01',
+      startTime: '10:00', endTime: '10:45', status: 'pending' }
+    const added = [fixed('now', '09:00', '10:00', date)]
+    const result = reflowForFixedTasks([existing], [], added)
+    expect(result.scheduledTasks).toContain(existing)
+    expect(result.moved).toBe(0)
+  })
+
+  it('automatically fixes scheduled collisions when a user adds a fixed task via form', () => {
+    const original = { ...floating('auto-existing', 60), title: 'Ôn kỹ năng', category: 'art',
+      date: '2027-01-18', startTime: '09:00', endTime: '10:00', status: 'pending', origin: 'floating' }
+    localStorage.setItem('nhip.smart-planner.v1', JSON.stringify({
+      fixedTasks: [], floatingTasks: [], scheduledTasks: [original], futurePlans: [], currentTheme: 'zen',
+    }))
+    render(<App />)
+    const form = screen.getByRole('form', { name: 'Thêm công việc' })
+    fireEvent.click(within(form).getByRole('button', { name: 'Cố định giờ' }))
+    fireEvent.change(within(form).getByPlaceholderText('Bạn muốn làm điều gì?'), { target: { value: 'Lịch cố định mới' } })
+    fireEvent.change(within(form).getByLabelText('Ngày thực hiện'), { target: { value: '2027-01-18' } })
+    fireEvent.change(within(form).getByLabelText('Bắt đầu'), { target: { value: '09:30' } })
+    fireEvent.change(within(form).getByLabelText('Kết thúc'), { target: { value: '10:30' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Cố định vào lịch' }))
+    const saved = JSON.parse(localStorage.getItem('nhip.smart-planner.v1'))
+    const originalAfter = saved.scheduledTasks.find(x => x.id === original.id)
+    expect(originalAfter).toBeDefined()
+    expect(overlaps(originalAfter, '09:30', '10:30')).toBe(false)
+    expect(saved.fixedTasks.some(x => x.title === 'Lịch cố định mới')).toBe(true)
   })
 })
