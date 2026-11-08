@@ -17,42 +17,43 @@ export const THEMES = {
     name: 'Zen & Earthy', short: 'Tĩnh tại', page: '#FDFCF8', panel: '#F8F5EF',
     text: '#2D2B2A', muted: '#84827F', line: '#EAE7E0', accent: '#B57E65',
     subtle: '#F1ECE4', academic: '#7A8B99', leadership: '#B57E65',
-    research: '#889C76', art: '#D5BCA4',
+    research: '#889C76', art: '#D5BCA4', school: '#758CA0',
   },
   midnight: {
     name: 'Midnight Focus', short: 'Đêm tĩnh', page: '#121212', panel: '#1B1C21',
     text: '#E0E0E0', muted: '#A5A4AC', line: '#36373E', accent: '#87ABD5',
     subtle: '#262932', academic: '#87ABD5', leadership: '#B29BC8',
-    research: '#88AFAB', art: '#CAA6BF',
+    research: '#88AFAB', art: '#CAA6BF', school: '#9AB5D4',
   },
   eclat: {
     name: 'Éclat / High Fashion', short: 'Éclat', page: '#FFFFFF', panel: '#FBF8F6',
     text: '#000000', muted: '#77706D', line: '#EAE3E1', accent: '#762B43',
     subtle: '#F8F0F1', academic: '#8A7B90', leadership: '#762B43',
-    research: '#9B8773', art: '#BE9A57',
+    research: '#9B8773', art: '#BE9A57', school: '#7F8299',
   },
   botanical: {
     name: 'Botanical / Eco-Green', short: 'Thảo mộc', page: '#F4F7F4', panel: '#EAF1EA',
     text: '#1C331E', muted: '#748576', line: '#D9E4D8', accent: '#60855D',
     subtle: '#E4EEE3', academic: '#72949A', leadership: '#A38D73',
-    research: '#638460', art: '#A7C17C',
+    research: '#638460', art: '#A7C17C', school: '#6F9690',
   },
   academia: {
     name: 'Academia / The Library', short: 'Thư viện', page: '#F5F2E9', panel: '#EEEAE0',
     text: '#2C3E50', muted: '#807F78', line: '#DED8CA', accent: '#617A94',
     subtle: '#E9E6DD', academic: '#617A94', leadership: '#B16E5A',
-    research: '#788A79', art: '#B79D7A',
+    research: '#788A79', art: '#B79D7A', school: '#677C96',
   },
   vado: {
     name: 'Sunrise Motion', short: 'Nắng mai', page: '#FAFAFA', panel: '#F0F2F5',
     text: '#111111', muted: '#74767B', line: '#E2E4E8', accent: '#ED874D',
     subtle: '#FFF1E6', academic: '#4E85CB', leadership: '#EC8955',
-    research: '#68A58C', art: '#AF9BBA',
+    research: '#68A58C', art: '#AF9BBA', school: '#528FC6',
   },
 };
 
 const GROUPS = [
   { id: 'academic', label: 'Học thuật & Ngôn ngữ', hint: 'IELTS · Tiếng Trung' },
+  { id: 'school', label: 'Đi học', hint: 'Lặp vào cùng thứ trong 8 tuần' },
   { id: 'leadership', label: 'Lãnh đạo & Điều hành', hint: 'UISC · HanaLeatherSG · Houzz Uni' },
   { id: 'research', label: 'Nghiên cứu & Dự án', hint: 'EcoPlant · Agri-Spray' },
   { id: 'art', label: 'Nghệ thuật & Bản thân', hint: 'Piano · Guitar · Model' },
@@ -61,6 +62,7 @@ const STORAGE_KEY = 'nhip.smart-planner.v1';
 const DAY_START = 8 * 60;
 const DAY_END = 22 * 60;
 const REST_BUFFER = 15;
+const SCHOOL_WEEKS = 8;
 const PRIORITY = { high: 0, normal: 1, low: 2 };
 const inputBase = 'w-full min-w-0 rounded-none border-0 border-b bg-transparent pb-2 pt-2 text-[13px] outline-none transition-colors duration-300 focus:border-[var(--accent)]';
 const displayDate = (d) => new Intl.DateTimeFormat('vi-VN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(d);
@@ -103,6 +105,38 @@ export function summarizeMonth(tasks, month) {
 }
 
 const fromIso = (key) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d, 12); };
+/** Tạo ngày học cách nhau đúng 7 ngày, tính cả buổi đầu tiên. */
+export function weeklyClassDates(date, weeks = SCHOOL_WEEKS) {
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date ?? '')) throw new Error('Ngày bắt đầu không hợp lệ.');
+  const first = fromIso(date);
+  if (isoDate(first) !== date) throw new Error('Ngày bắt đầu không tồn tại.');
+  return Array.from({ length: weeks }, (_, week) => {
+    const day = new Date(first.getFullYear(), first.getMonth(), first.getDate() + week * 7, 12);
+    return isoDate(day);
+  });
+}
+
+/** Trả về trọn vẹn 8 buổi hoặc báo trùng, không bao giờ thêm từng phần. */
+export function createWeeklyClassSeries(input, scheduledTasks, createId = makeId) {
+  const dates = weeklyClassDates(input.date);
+  const start = toMinutes(input.startTime);
+  const end = toMinutes(input.endTime);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    throw new Error('Giờ bắt đầu hoặc kết thúc buổi học không hợp lệ.');
+  }
+  const overlap = dates.find((date) => scheduledTasks.some((task) =>
+    task.date === date && start < toMinutes(task.endTime) && end > toMinutes(task.startTime)));
+  if (overlap) {
+    throw new Error(`Buổi học ngày ${overlap.split('-').reverse().join('/')} bị trùng giờ với lịch đã có. Chưa thêm buổi nào; hãy đổi ngày hoặc khung giờ.`);
+  }
+  const repeatGroupId = createId();
+  return dates.map((date, index) => ({
+    id: createId(), repeatGroupId, repeatIndex: index + 1, repeatTotal: SCHOOL_WEEKS,
+    date, startTime: input.startTime, endTime: input.endTime,
+    title: input.title, category: 'school', origin: 'fixed', status: 'approved',
+  }));
+}
+
 const toMinutes = (value) => { if (!/^\d{2}:\d{2}$/.test(value ?? '')) return NaN; const [h, m] = value.split(':').map(Number); return h <= 23 && m <= 59 ? h * 60 + m : NaN; };
 const toTime = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 const rgba = (hex, opacity) => { const raw = hex.replace('#', ''); const n = Number.parseInt(raw, 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${opacity})`; };
