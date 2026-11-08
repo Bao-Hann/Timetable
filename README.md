@@ -17,7 +17,7 @@ Repo: [Bao-Hann/Timetable](https://github.com/Bao-Hann/Timetable)
 - Công việc mới luôn ở trạng thái **Pending — Chờ duyệt**. Bấm **Duyệt** để chuyển sang **Approved — Chính thức**.
 - Chỉnh sửa công việc đưa trạng thái về chờ duyệt.
 - Xóa công việc và hoàn tác thao tác xóa.
-- Xuất JSON để sao lưu dữ liệu.
+- Xuất JSON để sao lưu dữ liệu và **nhập lại bản sao** để khôi phục lịch. Tệp được kiểm tra trước khi nhập; nếu đang có công việc riêng, ứng dụng yêu cầu xác nhận trước khi thay thế.
 
 Lần đầu mở ứng dụng có lịch mẫu được gắn nhãn rõ ràng. Lịch mẫu chỉ tồn tại trong bộ nhớ. Khi tạo công việc thật đầu tiên, ứng dụng chuyển sang lịch cá nhân sạch, không trộn dữ liệu mẫu.
 
@@ -53,7 +53,7 @@ npm run preview
 
 Dữ liệu cá nhân được lưu bằng `localStorage`, với khóa `nhip.timetable.v1`, trên trình duyệt và thiết bị đang sử dụng. Tải lại trang vẫn giữ công việc và trạng thái duyệt.
 
-Ứng dụng hiện chưa có máy chủ, tài khoản, đồng bộ nhiều thiết bị hay thông báo nhắc lịch. Xóa dữ liệu trình duyệt hoặc dùng cửa sổ riêng tư có thể làm mất lịch; nên xuất JSON định kỳ. Hiện chưa có giao diện nhập lại bản sao lưu.
+Ứng dụng hiện chưa có máy chủ, tài khoản, đồng bộ nhiều thiết bị hay thông báo nhắc lịch. Xóa dữ liệu trình duyệt hoặc dùng cửa sổ riêng tư có thể làm mất lịch; nên xuất JSON định kỳ. Để khôi phục, chọn **Nhập bản sao JSON** ở cuối trang, chọn tệp `.json` đã xuất từ Nhịp và xác nhận nếu muốn thay thế lịch hiện có. Tệp sai định dạng hoặc không hợp lệ sẽ bị từ chối, không thay đổi lịch hiện tại. Giới hạn tệp 10 MB.
 
 Nếu không đọc được dữ liệu lưu trữ hoặc dữ liệu bị hỏng, ứng dụng hiển thị cảnh báo và giữ nguyên dữ liệu gốc, không tự ghi đè. Những thay đổi trong phiên tạm có thể không được lưu sau khi đóng trang.
 
