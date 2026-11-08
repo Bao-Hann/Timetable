@@ -309,12 +309,16 @@ export default function App() {
   const [scheduledTasks, setScheduledTasks] = useState(initial.scheduledTasks);
   const [currentTheme, setCurrentTheme] = useState(initial.currentTheme);
   const [selectedDate, setSelectedDate] = useState(() => isoDate(new Date()));
+  const [visibleMonth, setVisibleMonth] = useState(() => { const now = new Date(); return isoDate(new Date(now.getFullYear(), now.getMonth(), 1, 12)); });
+  const [arrangeFeedback, setArrangeFeedback] = useState('');
+  const timelineRef = useRef(null);
   const [mode, setMode] = useState('floating');
   const [draft, setDraft] = useState({ title: '', category: 'academic', duration: '45', priority: 'normal', date: isoDate(new Date()), startTime: '09:00', endTime: '10:00' });
   const [message, setMessage] = useState('');
   const [noticeIsError, setNoticeIsError] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const theme = THEMES[currentTheme];
+  const displayedMonth = useMemo(() => fromIso(visibleMonth), [visibleMonth]);
   const day = fromIso(selectedDate);
   const allToday = useMemo(() => scheduledTasks.filter((item) => item.date === selectedDate).sort((a, b) => a.startTime.localeCompare(b.startTime)), [scheduledTasks, selectedDate]);
   const timeline = useMemo(() => buildTimeline(allToday), [allToday]);
@@ -327,7 +331,22 @@ export default function App() {
   }, [fixedTasks, floatingTasks, scheduledTasks, currentTheme]);
 
   const say = (text, error = false) => { setMessage(text); setNoticeIsError(error); };
-  const advanceDate = (delta) => { const next = fromIso(selectedDate); next.setDate(next.getDate() + delta); setSelectedDate(isoDate(next)); };
+  const selectDate = (key, scroll = false) => {
+    const next = fromIso(key);
+    setSelectedDate(key);
+    setVisibleMonth(isoDate(new Date(next.getFullYear(), next.getMonth(), 1, 12)));
+    setDraft((prev) => ({ ...prev, date: key }));
+    if (scroll && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => timelineRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }));
+    }
+  };
+  const advanceDate = (delta) => { const next = fromIso(selectedDate); next.setDate(next.getDate() + delta); selectDate(isoDate(next)); };
+  const moveMonth = (delta) => {
+    const next = new Date(displayedMonth.getFullYear(), displayedMonth.getMonth() + delta, 1, 12);
+    const currentDay = fromIso(selectedDate).getDate();
+    const cappedDay = Math.min(currentDay, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate());
+    selectDate(isoDate(new Date(next.getFullYear(), next.getMonth(), cappedDay, 12)));
+  };
   const updateDraft = (key, value) => setDraft((prev) => ({ ...prev, [key]: value }));
 
   function addTask(event) {
@@ -349,19 +368,32 @@ export default function App() {
       const item = { id: makeId(), date: draft.date, startTime: draft.startTime, endTime: draft.endTime, title, category: draft.category, origin: 'fixed', status: 'approved' };
       setFixedTasks((prev) => [...prev, item]);
       setScheduledTasks((prev) => [...prev, item]);
-      setSelectedDate(draft.date);
+      selectDate(draft.date);
       say('Đã cố định công việc trên lịch.');
     }
     setDraft((prev) => ({ ...prev, title: '' }));
   }
 
   function handleAutoSchedule() {
-    if (!floatingTasks.length) return say('Danh sách chờ đang trống. Thêm một dự định trước nhé.');
+    if (!floatingTasks.length) {
+      const feedback = 'Chưa có việc linh hoạt. Hãy thêm một việc vào danh sách chờ trước.';
+      setArrangeFeedback(feedback);
+      return say(feedback, true);
+    }
     const { placed, remaining } = autoScheduleTasks(floatingTasks, scheduledTasks, selectedDate);
-    if (!placed.length) return say('Hôm nay không còn khoảng trống phù hợp. Hãy thử ngày khác hoặc giảm thời lượng.', true);
+    if (!placed.length) {
+      const feedback = `Không tìm được khoảng trống cho ngày ${shortDate(day)} trong khung 08:00–22:00. Thử ngày khác hoặc giảm thời lượng.`;
+      setArrangeFeedback(feedback);
+      return say(feedback, true);
+    }
     setScheduledTasks((prev) => [...prev, ...placed]);
     setFloatingTasks(remaining);
-    say(`Đã xếp ${placed.length} việc vào ngày ${shortDate(day)}. ${remaining.length ? `Còn ${remaining.length} việc chờ.` : 'Tất cả đều đã có giờ.'} Hãy duyệt các gợi ý.`);
+    const feedback = `Đã tự xếp ${placed.length} công việc vào ngày ${shortDate(day)}; ${remaining.length} việc vẫn trong danh sách chờ. Bấm dấu ✓ trên dòng thời gian để duyệt.`;
+    setArrangeFeedback(feedback);
+    say(feedback);
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => timelineRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }));
+    }
   }
 
   function approveTask(id) {
