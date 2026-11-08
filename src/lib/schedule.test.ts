@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   STORAGE_KEY, addDays, approveTask, createDemoTasks, createTask, dateKey,
   getMonthDays, getNextWeek, groupTasksByDate, loadTasks, parseDateKey,
-  saveTasks, sortTasks, startOfWeek, type Task, type TaskInput,
+  parseBackup, saveTasks, sortTasks, startOfWeek, type Task, type TaskInput,
 } from './schedule';
 
 const input: TaskInput = {
@@ -154,5 +154,24 @@ describe('validated browser storage', () => {
     let writes = 0;
     expect(saveTasks([task({ title: '' })], { setItem: () => { writes += 1; } })).toBe(false);
     expect(writes).toBe(0);
+  });
+});
+
+describe('JSON backup restoration', () => {
+  it('parses and sorts a valid exported backup', () => {
+    const tasks = [task({ id: 'b', date: '2026-11-09' }), task({ id: 'a', date: '2026-11-08' })];
+    expect(parseBackup(envelope(tasks)).map(item => item.id)).toEqual(['a', 'b']);
+    expect(parseBackup(envelope([]))).toEqual([]);
+  });
+
+  it.each([
+    'not-json',
+    'null',
+    JSON.stringify({ version: 2, tasks: [] }),
+    envelope([task(), task()]),
+    envelope([task({ time: '25:00' })]),
+    envelope([task({ status: 'invalid' as Task['status'] })]),
+  ])('rejects malformed backup data without modifying saved state: %s', raw => {
+    expect(() => parseBackup(raw)).toThrow();
   });
 });
