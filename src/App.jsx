@@ -17,42 +17,43 @@ export const THEMES = {
     name: 'Zen & Earthy', short: 'Tĩnh tại', page: '#FDFCF8', panel: '#F8F5EF',
     text: '#2D2B2A', muted: '#84827F', line: '#EAE7E0', accent: '#B57E65',
     subtle: '#F1ECE4', academic: '#7A8B99', leadership: '#B57E65',
-    research: '#889C76', art: '#D5BCA4',
+    research: '#889C76', art: '#D5BCA4', school: '#758CA0',
   },
   midnight: {
     name: 'Midnight Focus', short: 'Đêm tĩnh', page: '#121212', panel: '#1B1C21',
     text: '#E0E0E0', muted: '#A5A4AC', line: '#36373E', accent: '#87ABD5',
     subtle: '#262932', academic: '#87ABD5', leadership: '#B29BC8',
-    research: '#88AFAB', art: '#CAA6BF',
+    research: '#88AFAB', art: '#CAA6BF', school: '#9AB5D4',
   },
   eclat: {
     name: 'Éclat / High Fashion', short: 'Éclat', page: '#FFFFFF', panel: '#FBF8F6',
     text: '#000000', muted: '#77706D', line: '#EAE3E1', accent: '#762B43',
     subtle: '#F8F0F1', academic: '#8A7B90', leadership: '#762B43',
-    research: '#9B8773', art: '#BE9A57',
+    research: '#9B8773', art: '#BE9A57', school: '#7F8299',
   },
   botanical: {
     name: 'Botanical / Eco-Green', short: 'Thảo mộc', page: '#F4F7F4', panel: '#EAF1EA',
     text: '#1C331E', muted: '#748576', line: '#D9E4D8', accent: '#60855D',
     subtle: '#E4EEE3', academic: '#72949A', leadership: '#A38D73',
-    research: '#638460', art: '#A7C17C',
+    research: '#638460', art: '#A7C17C', school: '#6F9690',
   },
   academia: {
     name: 'Academia / The Library', short: 'Thư viện', page: '#F5F2E9', panel: '#EEEAE0',
     text: '#2C3E50', muted: '#807F78', line: '#DED8CA', accent: '#617A94',
     subtle: '#E9E6DD', academic: '#617A94', leadership: '#B16E5A',
-    research: '#788A79', art: '#B79D7A',
+    research: '#788A79', art: '#B79D7A', school: '#677C96',
   },
   vado: {
     name: 'Sunrise Motion', short: 'Nắng mai', page: '#FAFAFA', panel: '#F0F2F5',
     text: '#111111', muted: '#74767B', line: '#E2E4E8', accent: '#ED874D',
     subtle: '#FFF1E6', academic: '#4E85CB', leadership: '#EC8955',
-    research: '#68A58C', art: '#AF9BBA',
+    research: '#68A58C', art: '#AF9BBA', school: '#528FC6',
   },
 };
 
 const GROUPS = [
   { id: 'academic', label: 'Học thuật & Ngôn ngữ', hint: 'IELTS · Tiếng Trung' },
+  { id: 'school', label: 'Đi học', hint: 'Lặp vào cùng thứ trong 8 tuần' },
   { id: 'leadership', label: 'Lãnh đạo & Điều hành', hint: 'UISC · HanaLeatherSG · Houzz Uni' },
   { id: 'research', label: 'Nghiên cứu & Dự án', hint: 'EcoPlant · Agri-Spray' },
   { id: 'art', label: 'Nghệ thuật & Bản thân', hint: 'Piano · Guitar · Model' },
@@ -61,6 +62,7 @@ const STORAGE_KEY = 'nhip.smart-planner.v1';
 const DAY_START = 8 * 60;
 const DAY_END = 22 * 60;
 const REST_BUFFER = 15;
+const SCHOOL_WEEKS = 8;
 const PRIORITY = { high: 0, normal: 1, low: 2 };
 const inputBase = 'w-full min-w-0 rounded-none border-0 border-b bg-transparent pb-2 pt-2 text-[13px] outline-none transition-colors duration-300 focus:border-[var(--accent)]';
 const displayDate = (d) => new Intl.DateTimeFormat('vi-VN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(d);
@@ -103,6 +105,38 @@ export function summarizeMonth(tasks, month) {
 }
 
 const fromIso = (key) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d, 12); };
+/** Tạo ngày học cách nhau đúng 7 ngày, tính cả buổi đầu tiên. */
+export function weeklyClassDates(date, weeks = SCHOOL_WEEKS) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) throw new Error('Ngày bắt đầu không hợp lệ.');
+  const first = fromIso(date);
+  if (isoDate(first) !== date) throw new Error('Ngày bắt đầu không tồn tại.');
+  return Array.from({ length: weeks }, (_, week) => {
+    const day = new Date(first.getFullYear(), first.getMonth(), first.getDate() + week * 7, 12);
+    return isoDate(day);
+  });
+}
+
+/** Trả về trọn vẹn 8 buổi hoặc báo trùng, không bao giờ thêm từng phần. */
+export function createWeeklyClassSeries(input, scheduledTasks, createId = makeId) {
+  const dates = weeklyClassDates(input.date);
+  const start = toMinutes(input.startTime);
+  const end = toMinutes(input.endTime);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    throw new Error('Giờ bắt đầu hoặc kết thúc buổi học không hợp lệ.');
+  }
+  const overlap = dates.find((date) => scheduledTasks.some((task) =>
+    task.date === date && start < toMinutes(task.endTime) && end > toMinutes(task.startTime)));
+  if (overlap) {
+    throw new Error(`Buổi học ngày ${overlap.split('-').reverse().join('/')} bị trùng giờ với lịch đã có. Chưa thêm buổi nào; hãy đổi ngày hoặc khung giờ.`);
+  }
+  const repeatGroupId = createId();
+  return dates.map((date, index) => ({
+    id: createId(), repeatGroupId, repeatIndex: index + 1, repeatTotal: SCHOOL_WEEKS,
+    date, startTime: input.startTime, endTime: input.endTime,
+    title: input.title, category: 'school', origin: 'fixed', status: 'approved',
+  }));
+}
+
 const toMinutes = (value) => { if (!/^\d{2}:\d{2}$/.test(value ?? '')) return NaN; const [h, m] = value.split(':').map(Number); return h <= 23 && m <= 59 ? h * 60 + m : NaN; };
 const toTime = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 const rgba = (hex, opacity) => { const raw = hex.replace('#', ''); const n = Number.parseInt(raw, 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${opacity})`; };
@@ -268,7 +302,7 @@ function GroupBadge({ category, theme }) {
   </span>;
 }
 
-function TaskCard({ task, theme, onApprove, onRemove, onRequeue }) {
+function TaskCard({ task, theme, onApprove, onRemove, onRequeue, onRemoveSeries }) {
   const pending = task.status === 'pending';
   const accent = theme[task.category] ?? theme.accent;
   return <div className="group grid grid-cols-[51px_12px_minmax(0,1fr)] gap-3 pb-4 sm:grid-cols-[70px_14px_minmax(0,1fr)] sm:gap-4">
@@ -281,6 +315,7 @@ function TaskCard({ task, theme, onApprove, onRemove, onRequeue }) {
         <div className="flex items-center gap-1.5">
           {pending ? <button type="button" aria-label={`Duyệt ${task.title}`} title="Duyệt công việc" onClick={() => onApprove(task.id)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors hover:bg-[var(--soft)]" style={{ borderColor: theme.line, color: theme.accent }}><Check size={15} /></button>
             : <span className="inline-flex items-center gap-1 text-[10px]" style={{ color: theme.muted }}><CheckCheck size={13} /> Đã chốt</span>}
+          {task.repeatGroupId && <button type="button" onClick={() => onRemoveSeries(task.repeatGroupId)} aria-label={`Xóa cả 8 buổi: ${task.title}`} title="Xóa toàn bộ chuỗi 8 buổi" className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-dashed transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted, borderColor: theme.line }}><Trash2 size={14} /></button>}
           {task.origin === 'floating' && <button type="button" onClick={() => onRequeue(task.id)} aria-label={`Trả lại danh sách chờ: ${task.title}`} title="Trả lại danh sách chờ" className="inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><RotateCcw size={14} /></button>}
           <button type="button" onClick={() => onRemove(task.id)} aria-label={`Xóa ${task.title}`} title="Xóa công việc" className="inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><Trash2 size={14} /></button>
         </div>
@@ -288,7 +323,7 @@ function TaskCard({ task, theme, onApprove, onRemove, onRequeue }) {
       <h3 className="mt-3 text-[13px] font-medium leading-relaxed sm:text-[14px]" style={{ color: theme.text }}>{task.title}</h3>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px]" style={{ color: theme.muted }}>
         <span className="inline-flex items-center gap-1.5 tabular-nums"><Clock3 size={12} /> {task.startTime} — {task.endTime}</span>
-        <span>{pending ? 'Gợi ý · chờ duyệt' : task.origin === 'fixed' ? 'Lịch cố định' : 'Đã xếp tự động'}</span>
+        <span>{task.repeatGroupId ? `Đi học · buổi ${task.repeatIndex}/${task.repeatTotal}` : pending ? 'Gợi ý · chờ duyệt' : task.origin === 'fixed' ? 'Lịch cố định' : 'Đã xếp tự động'}</span>
       </div>
     </article>
   </div>;
@@ -367,6 +402,19 @@ export default function App() {
       setFloatingTasks((prev) => [...prev, { id: makeId(), title, category: draft.category, estimatedDuration, priority: draft.priority }]);
       reportForm(`Đã thêm “${title}” vào Waiting List. Chọn Auto arrange khi muốn xếp lịch.`);
     } else {
+      if (draft.category === 'school') {
+        try {
+          const series = createWeeklyClassSeries({ ...draft, title }, scheduledTasks);
+          setFixedTasks((prev) => [...prev, ...series]);
+          setScheduledTasks((prev) => [...prev, ...series]);
+          selectDate(draft.date);
+          reportForm(`Đã thêm đủ 8 buổi “${title}” vào lịch, từ ${series[0].date.split('-').reverse().join('/')} đến ${series[7].date.split('-').reverse().join('/')}.`);
+          setDraft((prev) => ({ ...prev, title: '' }));
+        } catch (error) {
+          reportForm(error instanceof Error ? error.message : 'Không thể thêm lịch học.', true);
+        }
+        return;
+      }
       const start = toMinutes(draft.startTime);
       const end = toMinutes(draft.endTime);
       if (!draft.date || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
@@ -415,6 +463,14 @@ export default function App() {
     setScheduledTasks((prev) => prev.filter((task) => task.id !== id));
     if (item?.origin === 'fixed') setFixedTasks((prev) => prev.filter((task) => task.id !== id));
     say('Đã xóa công việc khỏi lịch.');
+  }
+  function removeSeries(groupId) {
+    const count = scheduledTasks.filter((task) => task.repeatGroupId === groupId).length;
+    if (!count) return;
+    if (!window.confirm(`Xóa toàn bộ ${count} buổi học còn trong lịch? Các buổi khác và công việc khác sẽ được giữ nguyên.`)) return;
+    setScheduledTasks((prev) => prev.filter((task) => task.repeatGroupId !== groupId));
+    setFixedTasks((prev) => prev.filter((task) => task.repeatGroupId !== groupId));
+    say(`Đã xóa ${count} buổi học thuộc cùng một lịch.`);
   }
   function requeue(id) {
     const item = scheduledTasks.find((task) => task.id === id);
@@ -471,18 +527,23 @@ export default function App() {
           <section className="rounded-2xl border px-5 py-6 sm:px-7" style={{ borderColor: theme.line, backgroundColor: theme.panel }}>
             <div className="mb-6 flex items-start justify-between gap-3"><div><p className="text-[9px] uppercase tracking-[.2em]" style={{ color: theme.muted }}>Ghi một điều cần làm</p><h2 className="mt-2 font-serif text-[27px] tracking-[-.045em]">Một dự định mới.</h2></div><Plus size={18} strokeWidth={1.5} style={{ color: theme.accent }} /></div>
             <div className="mb-5 flex rounded-lg p-1 text-[11px]" style={{ backgroundColor: theme.subtle }}>
-              {[['floating', 'Linh hoạt'], ['fixed', 'Cố định giờ']].map(([key, label]) => <button type="button" key={key} onClick={() => { setMode(key); setFormFeedback(null); }} className="flex-1 rounded-md px-2 py-2.5 transition-colors duration-300" style={{ backgroundColor: mode === key ? theme.page : 'transparent', color: mode === key ? theme.text : theme.muted }}>{label}</button>)}
+              {[['floating', 'Linh hoạt'], ['fixed', 'Cố định giờ']].map(([key, label]) => <button type="button" key={key} onClick={() => { setMode(key); if (key === 'floating' && draft.category === 'school') setDraft((prev) => ({ ...prev, category: 'academic' })); setFormFeedback(null); }} className="flex-1 rounded-md px-2 py-2.5 transition-colors duration-300" style={{ backgroundColor: mode === key ? theme.page : 'transparent', color: mode === key ? theme.text : theme.muted }}>{label}</button>)}
             </div>
             <form onSubmit={addTask} noValidate aria-label="Thêm công việc" className="space-y-5">
               <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Tên công việc</span><input required maxLength={160} value={draft.title} onChange={(e) => updateDraft('title', e.target.value)} placeholder="Bạn muốn làm điều gì?" className={inputBase} style={{ color: theme.text, borderColor: theme.line }} /></label>
-              <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Nhóm</span><select value={draft.category} onChange={(e) => updateDraft('category', e.target.value)} className={inputBase} style={{ color: theme.text, backgroundColor: theme.panel, borderColor: theme.line }}>{GROUPS.map((group) => <option value={group.id} key={group.id}>{group.label}</option>)}</select></label>
+              <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Nhóm</span><select value={draft.category} onChange={(e) => { updateDraft('category', e.target.value); if (e.target.value === 'school') setMode('fixed'); }} className={inputBase} style={{ color: theme.text, backgroundColor: theme.panel, borderColor: theme.line }}>{GROUPS.map((group) => <option value={group.id} key={group.id}>{group.label}</option>)}</select></label>
               {mode === 'floating' ? <div className="grid grid-cols-2 gap-4">
                 <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ước tính (phút)</span><input type="number" min={5} max={600} step={1} required value={draft.duration} onChange={(e) => updateDraft('duration', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line }} /></label>
                 <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ưu tiên</span><select value={draft.priority} onChange={(e) => updateDraft('priority', e.target.value)} className={inputBase} style={{ color: theme.text, backgroundColor: theme.panel, borderColor: theme.line }}><option value="high">Quan trọng</option><option value="normal">Bình thường</option><option value="low">Có thể để sau</option></select></label>
               </div> : <><label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ngày thực hiện</span><input type="date" required value={draft.date} onChange={(e) => updateDraft('date', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line, colorScheme: currentTheme === 'midnight' ? 'dark' : 'light' }} /></label>
                 <div className="grid grid-cols-2 gap-4"><label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Bắt đầu</span><input type="time" value={draft.startTime} onChange={(e) => updateDraft('startTime', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line, colorScheme: currentTheme === 'midnight' ? 'dark' : 'light' }} /></label><label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Kết thúc</span><input type="time" value={draft.endTime} onChange={(e) => updateDraft('endTime', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line, colorScheme: currentTheme === 'midnight' ? 'dark' : 'light' }} /></label></div>
+                {draft.category === 'school' && <div className="rounded-lg border border-dashed px-4 py-3 text-[11px] leading-[1.9]" style={{ borderColor: theme.school, color: theme.text, backgroundColor: rgba(theme.school, .07) }}>
+                  <p className="font-medium">Lịch học cố định · 8 tuần liên tiếp</p>
+                  <p style={{ color: theme.muted }}>Chọn ngày học đầu tiên và khung giờ. Nhịp sẽ tạo đủ 8 buổi cùng thứ, cùng giờ; tự kiểm tra trùng lịch ở cả 8 tuần.</p>
+                  <p className="mt-1 tabular-nums" style={{ color: theme.school }}>{draft.date && /^\d{4}-\d{2}-\d{2}$/.test(draft.date) ? `${weeklyClassDates(draft.date)[0].split('-').reverse().join('/')} → ${weeklyClassDates(draft.date)[7].split('-').reverse().join('/')}` : 'Hãy chọn ngày bắt đầu hợp lệ.'}</p>
+                </div>}
               </>}
-              <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3.5 text-[12px] font-medium transition-opacity duration-300 hover:opacity-85" style={{ backgroundColor: theme.accent, color: currentTheme === 'midnight' || currentTheme === 'botanical' ? '#121212' : '#FFFFFF' }}><Plus size={16} /> {mode === 'floating' ? 'Thêm vào danh sách chờ' : 'Cố định vào lịch'} <ArrowRight size={14} /></button>
+              <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3.5 text-[12px] font-medium transition-opacity duration-300 hover:opacity-85" style={{ backgroundColor: theme.accent, color: currentTheme === 'midnight' || currentTheme === 'botanical' ? '#121212' : '#FFFFFF' }}><Plus size={16} /> {mode === 'floating' ? 'Thêm vào danh sách chờ' : draft.category === 'school' ? 'Thêm 8 buổi đi học' : 'Cố định vào lịch'} <ArrowRight size={14} /></button>
               {formFeedback && <p role={formFeedback.error ? 'alert' : 'status'} className="rounded-lg px-3 py-2.5 text-[11px] leading-relaxed" style={{ backgroundColor: rgba(formFeedback.error ? theme.leadership : theme.research, .1), color: formFeedback.error ? theme.leadership : theme.text }}>{formFeedback.text}</p>}
             </form>
           </section>
@@ -512,7 +573,7 @@ export default function App() {
           {storageError && <p role="alert" className="mt-4 text-[11px]" style={{ color: theme.leadership }}>Trình duyệt chưa lưu được dữ liệu. Thay đổi có thể mất khi tải lại trang.</p>}
           <div className="relative mt-8">
             <div className="pointer-events-none absolute bottom-8 left-[70px] top-6 w-px sm:left-[94px]" style={{ backgroundColor: theme.line }} aria-hidden="true" />
-            {timeline.length ? timeline.map((row) => row.type === 'task' ? <TaskCard key={row.key} task={row.task} theme={theme} onApprove={approveTask} onRemove={removeScheduled} onRequeue={requeue} /> : <ZenSpace key={row.key} row={row} theme={theme} />) : <div className="py-24 text-center"><Wind size={26} className="mx-auto" style={{ color: theme.art }} /><h3 className="mt-5 font-serif text-[25px] italic">Một trang ngày còn trắng.</h3><p className="mt-3 text-[12px]" style={{ color: theme.muted }}>Thêm một công việc hoặc chọn Auto arrange để bắt đầu.</p></div>}
+            {timeline.length ? timeline.map((row) => row.type === 'task' ? <TaskCard key={row.key} task={row.task} theme={theme} onApprove={approveTask} onRemove={removeScheduled} onRequeue={requeue} onRemoveSeries={removeSeries} /> : <ZenSpace key={row.key} row={row} theme={theme} />) : <div className="py-24 text-center"><Wind size={26} className="mx-auto" style={{ color: theme.art }} /><h3 className="mt-5 font-serif text-[25px] italic">Một trang ngày còn trắng.</h3><p className="mt-3 text-[12px]" style={{ color: theme.muted }}>Thêm một công việc hoặc chọn Auto arrange để bắt đầu.</p></div>}
           </div>
           <div className="mt-8 flex items-center gap-3 border-t pt-6 text-[11px]" style={{ borderColor: theme.line, color: theme.muted }}><Coffee size={15} /> Đủ đầy, nhưng không cần vội vàng.</div>
         </main>
