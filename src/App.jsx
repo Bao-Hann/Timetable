@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight, CalendarDays, Check, CheckCheck, ChevronLeft, ChevronRight,
   Clock3, Coffee, Flower2, Leaf, Plus, RotateCcw, Sparkles, Trash2,
@@ -9,7 +9,7 @@ import {
  * NHỊP — Lịch trình cá nhân · Editorial / Zen
  * Toàn bộ giao diện, trạng thái, lưu trữ và bộ xếp lịch đều nằm trong App.jsx.
  * Cần React, lucide-react và Tailwind CSS. Không cần API hay máy chủ.
- * "AI Magic" là thuật toán xếp lịch dựa trên quy tắc, không gọi mô hình AI.
+ * "Auto arrange" là thuật toán xếp lịch dựa trên quy tắc, không gọi mô hình AI.
  */
 
 export const THEMES = {
@@ -44,7 +44,7 @@ export const THEMES = {
     research: '#788A79', art: '#B79D7A',
   },
   vado: {
-    name: 'VADO Dynamic', short: 'Năng động', page: '#FAFAFA', panel: '#F0F2F5',
+    name: 'Sunrise Motion', short: 'Nắng mai', page: '#FAFAFA', panel: '#F0F2F5',
     text: '#111111', muted: '#74767B', line: '#E2E4E8', accent: '#ED874D',
     subtle: '#FFF1E6', academic: '#4E85CB', leadership: '#EC8955',
     research: '#68A58C', art: '#AF9BBA',
@@ -66,6 +66,42 @@ const inputBase = 'w-full min-w-0 rounded-none border-0 border-b bg-transparent 
 const displayDate = (d) => new Intl.DateTimeFormat('vi-VN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(d);
 const shortDate = (d) => new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit' }).format(d);
 const isoDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const monthHeading = (date) => new Intl.DateTimeFormat('vi-VN', { month: 'long', year: 'numeric' }).format(date);
+const weekdayInitials = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+
+/** Lưới tháng: bắt đầu thứ Hai, 35 hoặc 42 ô tùy tháng. */
+export function getMonthGrid(month) {
+  const first = new Date(month.getFullYear(), month.getMonth(), 1, 12);
+  const offset = (first.getDay() + 6) % 7;
+  const lastDay = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const count = Math.max(35, Math.ceil((offset + lastDay) / 7) * 7);
+  return Array.from({ length: count }, (_, index) =>
+    new Date(first.getFullYear(), first.getMonth(), 1 - offset + index, 12));
+}
+
+/** Thống kê công việc đã xếp theo từng ngày, chỉ tính tháng đang xem. */
+export function summarizeMonth(tasks, month) {
+  const monthKey = isoDate(new Date(month.getFullYear(), month.getMonth(), 1, 12)).slice(0, 7);
+  const byDate = new Map();
+  let total = 0;
+  let approved = 0;
+  let pending = 0;
+  const occupied = new Set();
+  for (const task of tasks) {
+    if (!task || typeof task.date !== 'string') continue;
+    if (!byDate.has(task.date)) byDate.set(task.date, []);
+    byDate.get(task.date).push(task);
+    if (task.date.startsWith(monthKey + '-')) {
+      total++;
+      occupied.add(task.date);
+      if (task.status === 'approved') approved++;
+      if (task.status === 'pending') pending++;
+    }
+  }
+  for (const items of byDate.values()) items.sort((a, b) => String(a.startTime).localeCompare(String(b.startTime)));
+  return { byDate, total, approved, pending, daysWithTasks: occupied.size };
+}
+
 const fromIso = (key) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d, 12); };
 const toMinutes = (value) => { if (!/^\d{2}:\d{2}$/.test(value ?? '')) return NaN; const [h, m] = value.split(':').map(Number); return h <= 23 && m <= 59 ? h * 60 + m : NaN; };
 const toTime = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
@@ -166,6 +202,64 @@ function buildTimeline(tasks) {
   return rows;
 }
 
+function MonthOverview({ month, selectedDate, onSelectDate, onMoveMonth, scheduledTasks, theme }) {
+  const days = useMemo(() => getMonthGrid(month), [month]);
+  const summary = useMemo(() => summarizeMonth(scheduledTasks, month), [scheduledTasks, month]);
+  const today = isoDate(new Date());
+  return <section className="mb-10 rounded-2xl border px-3 py-6 shadow-[0_14px_55px_-48px_rgba(25,25,25,.22)] sm:px-6 sm:py-7" style={{ borderColor: theme.line, backgroundColor: theme.panel }} aria-label="Lịch tổng quan tháng">
+    <div className="mb-6 flex flex-wrap items-start justify-between gap-4 px-1 sm:px-2">
+      <div>
+        <p className="text-[9px] uppercase tracking-[.22em]" style={{ color: theme.muted }}>Toàn cảnh tháng này</p>
+        <h2 className="mt-2 font-serif text-[clamp(25px,3vw,35px)] capitalize tracking-[-.045em]" aria-label={`Lịch ${monthHeading(month)}`}>{monthHeading(month)}</h2>
+        <p className="mt-2 text-[10px] leading-relaxed sm:text-[11px]" style={{ color: theme.muted }}>
+          {summary.total} công việc · {summary.approved} đã chốt · {summary.pending} chờ duyệt · {summary.daysWithTasks} ngày có lịch
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={() => onMoveMonth(-1)} aria-label="Tháng trước" className="grid h-9 w-9 place-items-center rounded-lg border transition-colors duration-300 hover:opacity-65" style={{ borderColor: theme.line }}><ChevronLeft size={16}/></button>
+        <button type="button" onClick={() => onMoveMonth(1)} aria-label="Tháng tiếp theo" className="grid h-9 w-9 place-items-center rounded-lg border transition-colors duration-300 hover:opacity-65" style={{ borderColor: theme.line }}><ChevronRight size={16}/></button>
+      </div>
+    </div>
+    <div className="grid grid-cols-7 gap-1 border-b pb-2 sm:gap-2" style={{ borderColor: theme.line }}>
+      {weekdayInitials.map((day, index) => <div key={day} className="py-1 text-center text-[10px] font-medium" style={{ color: index > 4 ? theme.accent : theme.muted }}>{day}</div>)}
+    </div>
+    <div className="mt-2 grid grid-cols-7 gap-1 sm:gap-2">
+      {days.map((date) => {
+        const key = isoDate(date);
+        const tasks = summary.byDate.get(key) ?? [];
+        const approved = tasks.filter((task) => task.status === 'approved').length;
+        const pending = tasks.length - approved;
+        const outside = date.getMonth() !== month.getMonth();
+        const chosen = key === selectedDate;
+        const isToday = key === today;
+        return <button key={key} type="button" onClick={() => onSelectDate(key)}
+          aria-label={`Xem ngày ${shortDate(date)}/${date.getFullYear()}: ${tasks.length} công việc, ${pending} chờ duyệt`}
+          aria-pressed={chosen} aria-current={isToday ? 'date' : undefined}
+          className="group relative flex min-h-[70px] min-w-0 flex-col items-start rounded-lg border px-1.5 py-2 text-left transition-colors duration-300 hover:brightness-[.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 sm:min-h-[110px] sm:px-2.5 sm:py-2.5"
+          style={{ borderColor: chosen ? theme.accent : theme.line, backgroundColor: chosen ? rgba(theme.accent, .1) : theme.page, opacity: outside ? .48 : 1 }}>
+          <div className="flex w-full items-start justify-between gap-0.5">
+            <span className="inline-grid h-6 w-6 shrink-0 place-items-center rounded-full font-serif text-[13px] sm:h-7 sm:w-7 sm:text-[15px]" style={{ backgroundColor: isToday ? theme.accent : 'transparent', color: isToday ? theme.page : theme.text }}>{date.getDate()}</span>
+            {tasks.length > 0 && <span className="mt-0.5 rounded-full px-1.5 py-0.5 text-[9px] tabular-nums sm:text-[10px]" style={{ color: theme.text, backgroundColor: theme.subtle }}>{tasks.length}</span>}
+          </div>
+          {tasks.length > 0 && <div className="mt-auto flex w-full min-w-0 flex-col gap-1 pt-1.5">
+            <div className="flex items-center gap-1.5" aria-hidden="true">
+              {approved > 0 && <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: theme.research }} />}
+              {pending > 0 && <span className="h-1.5 w-1.5 rounded-full border border-dashed" style={{ borderColor: theme.accent }} />}
+              <span className="text-[9px] tabular-nums" style={{ color: theme.muted }}>{approved}/{tasks.length} đã chốt</span>
+            </div>
+            <span className="hidden truncate text-[10px] leading-relaxed md:block" style={{ color: theme.muted }}>{tasks[0]?.startTime} · {tasks[0]?.title}</span>
+          </div>}
+        </button>;
+      })}
+    </div>
+    <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 px-1 text-[10px]" style={{ color: theme.muted }}>
+      <span className="inline-flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: theme.research }}/>Đã chốt</span>
+      <span className="inline-flex items-center gap-2"><span className="h-2 w-2 rounded-full border border-dashed" style={{ borderColor: theme.accent }}/>Chờ duyệt</span>
+      <span className="ml-auto">Chọn một ngày để xem dòng thời gian <ArrowRight size={12} className="inline" /></span>
+    </div>
+  </section>;
+}
+
 function GroupBadge({ category, theme }) {
   const group = GROUPS.find((item) => item.id === category) ?? GROUPS[0];
   const color = theme[category] ?? theme.accent;
@@ -215,12 +309,16 @@ export default function App() {
   const [scheduledTasks, setScheduledTasks] = useState(initial.scheduledTasks);
   const [currentTheme, setCurrentTheme] = useState(initial.currentTheme);
   const [selectedDate, setSelectedDate] = useState(() => isoDate(new Date()));
+  const [visibleMonth, setVisibleMonth] = useState(() => { const now = new Date(); return isoDate(new Date(now.getFullYear(), now.getMonth(), 1, 12)); });
+  const [arrangeFeedback, setArrangeFeedback] = useState('');
+  const timelineRef = useRef(null);
   const [mode, setMode] = useState('floating');
   const [draft, setDraft] = useState({ title: '', category: 'academic', duration: '45', priority: 'normal', date: isoDate(new Date()), startTime: '09:00', endTime: '10:00' });
   const [message, setMessage] = useState('');
   const [noticeIsError, setNoticeIsError] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const theme = THEMES[currentTheme];
+  const displayedMonth = useMemo(() => fromIso(visibleMonth), [visibleMonth]);
   const day = fromIso(selectedDate);
   const allToday = useMemo(() => scheduledTasks.filter((item) => item.date === selectedDate).sort((a, b) => a.startTime.localeCompare(b.startTime)), [scheduledTasks, selectedDate]);
   const timeline = useMemo(() => buildTimeline(allToday), [allToday]);
@@ -233,7 +331,22 @@ export default function App() {
   }, [fixedTasks, floatingTasks, scheduledTasks, currentTheme]);
 
   const say = (text, error = false) => { setMessage(text); setNoticeIsError(error); };
-  const advanceDate = (delta) => { const next = fromIso(selectedDate); next.setDate(next.getDate() + delta); setSelectedDate(isoDate(next)); };
+  const selectDate = (key, scroll = false) => {
+    const next = fromIso(key);
+    setSelectedDate(key);
+    setVisibleMonth(isoDate(new Date(next.getFullYear(), next.getMonth(), 1, 12)));
+    setDraft((prev) => ({ ...prev, date: key }));
+    if (scroll && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => timelineRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }));
+    }
+  };
+  const advanceDate = (delta) => { const next = fromIso(selectedDate); next.setDate(next.getDate() + delta); selectDate(isoDate(next)); };
+  const moveMonth = (delta) => {
+    const next = new Date(displayedMonth.getFullYear(), displayedMonth.getMonth() + delta, 1, 12);
+    const currentDay = fromIso(selectedDate).getDate();
+    const cappedDay = Math.min(currentDay, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate());
+    selectDate(isoDate(new Date(next.getFullYear(), next.getMonth(), cappedDay, 12)));
+  };
   const updateDraft = (key, value) => setDraft((prev) => ({ ...prev, [key]: value }));
 
   function addTask(event) {
@@ -244,7 +357,7 @@ export default function App() {
       const estimatedDuration = Number(draft.duration);
       if (!Number.isInteger(estimatedDuration) || estimatedDuration < 5 || estimatedDuration > 600) return say('Thời lượng phải từ 5 đến 600 phút.', true);
       setFloatingTasks((prev) => [...prev, { id: makeId(), title, category: draft.category, estimatedDuration, priority: draft.priority }]);
-      say('Đã thêm vào danh sách chờ. Bấm AI Magic để xếp lịch.');
+      say('Đã thêm vào danh sách chờ. Bấm Auto arrange để xếp lịch.');
     } else {
       const start = toMinutes(draft.startTime);
       const end = toMinutes(draft.endTime);
@@ -255,19 +368,32 @@ export default function App() {
       const item = { id: makeId(), date: draft.date, startTime: draft.startTime, endTime: draft.endTime, title, category: draft.category, origin: 'fixed', status: 'approved' };
       setFixedTasks((prev) => [...prev, item]);
       setScheduledTasks((prev) => [...prev, item]);
-      setSelectedDate(draft.date);
+      selectDate(draft.date);
       say('Đã cố định công việc trên lịch.');
     }
     setDraft((prev) => ({ ...prev, title: '' }));
   }
 
   function handleAutoSchedule() {
-    if (!floatingTasks.length) return say('Danh sách chờ đang trống. Thêm một dự định trước nhé.');
+    if (!floatingTasks.length) {
+      const feedback = 'Chưa có việc linh hoạt. Hãy thêm một việc vào danh sách chờ trước.';
+      setArrangeFeedback(feedback);
+      return say(feedback, true);
+    }
     const { placed, remaining } = autoScheduleTasks(floatingTasks, scheduledTasks, selectedDate);
-    if (!placed.length) return say('Hôm nay không còn khoảng trống phù hợp. Hãy thử ngày khác hoặc giảm thời lượng.', true);
+    if (!placed.length) {
+      const feedback = `Không tìm được khoảng trống cho ngày ${shortDate(day)} trong khung 08:00–22:00. Thử ngày khác hoặc giảm thời lượng.`;
+      setArrangeFeedback(feedback);
+      return say(feedback, true);
+    }
     setScheduledTasks((prev) => [...prev, ...placed]);
     setFloatingTasks(remaining);
-    say(`Đã xếp ${placed.length} việc vào ngày ${shortDate(day)}. ${remaining.length ? `Còn ${remaining.length} việc chờ.` : 'Tất cả đều đã có giờ.'} Hãy duyệt các gợi ý.`);
+    const feedback = `Đã tự xếp ${placed.length} công việc vào ngày ${shortDate(day)}; ${remaining.length} việc vẫn trong danh sách chờ. Bấm dấu ✓ trên dòng thời gian để duyệt.`;
+    setArrangeFeedback(feedback);
+    say(feedback);
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => timelineRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }));
+    }
   }
 
   function approveTask(id) {
@@ -307,7 +433,7 @@ export default function App() {
           <select id="theme" aria-label="Đổi giao diện" value={currentTheme} onChange={(e) => setCurrentTheme(e.target.value)} className="max-w-[210px] cursor-pointer rounded-lg border px-3 py-2.5 text-[11px] outline-none transition-colors duration-300" style={{ color: theme.text, backgroundColor: theme.panel, borderColor: theme.line }}>
             {Object.entries(THEMES).map(([key, option]) => <option key={key} value={key}>{option.name}</option>)}
           </select>
-          <button type="button" onClick={() => { const now = isoDate(new Date()); setSelectedDate(now); updateDraft('date', now); }} className="rounded-lg border px-3 py-2.5 text-[11px] transition-colors duration-300 hover:opacity-70" style={{ borderColor: theme.line }}>Hôm nay</button>
+          <button type="button" onClick={() => selectDate(isoDate(new Date()))} className="rounded-lg border px-3 py-2.5 text-[11px] transition-colors duration-300 hover:opacity-70" style={{ borderColor: theme.line }}>Hôm nay</button>
         </div>
       </header>
 
@@ -327,6 +453,8 @@ export default function App() {
           { label: 'Khung giờ xếp lịch', value: '08–22' },
         ].map((info) => <div key={info.label} className="px-2 py-2 sm:px-5"><div className="font-serif text-[33px] leading-none tracking-[-.06em] sm:text-[39px]" style={{ color: theme.accent }}>{info.value}</div><p className="mt-3 text-[10px]" style={{ color: theme.muted }}>{info.label}</p></div>)}
       </div>
+
+      <MonthOverview month={displayedMonth} selectedDate={selectedDate} onSelectDate={(key) => selectDate(key, true)} onMoveMonth={moveMonth} scheduledTasks={scheduledTasks} theme={theme} />
 
       <div className="grid grid-cols-1 items-start gap-9 lg:grid-cols-[minmax(315px,385px)_minmax(0,1fr)] lg:gap-14 xl:gap-20">
         <aside className="min-w-0 space-y-7 lg:sticky lg:top-7">
@@ -357,22 +485,23 @@ export default function App() {
                 <button type="button" onClick={() => removeFloating(task.id)} className="rounded-md p-2 transition-colors hover:bg-[var(--soft)]" aria-label={`Xóa khỏi danh sách chờ: ${task.title}`} style={{ color: theme.muted }}><X size={14} /></button>
               </div>) : <p className="py-7 text-center font-serif text-[17px] italic" style={{ color: theme.muted }}>Mọi dự định đều đã có chỗ.</p>}
             </div>
-            <button type="button" onClick={handleAutoSchedule} className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3.5 text-[12px] font-medium transition-all duration-300 hover:-translate-y-0.5" style={{ borderColor: theme.accent, color: theme.accent, backgroundColor: rgba(theme.accent, .08) }}><Sparkles size={17} /> AI Magic · Tự động xếp lịch</button>
+            <button type="button" onClick={handleAutoSchedule} className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3.5 text-[12px] font-medium transition-all duration-300 hover:-translate-y-0.5" style={{ borderColor: theme.accent, color: theme.accent, backgroundColor: rgba(theme.accent, .08) }}><Sparkles size={17} /> Auto arrange · Tự xếp lịch</button>
+            {arrangeFeedback && <p aria-live="polite" className="mt-3 rounded-lg px-3 py-2.5 text-[11px] leading-[1.8]" style={{ color: theme.text, backgroundColor: theme.subtle }}>{arrangeFeedback}</p>}
             <p className="mt-3 text-[10px] leading-[1.8]" style={{ color: theme.muted }}>Ưu tiên công việc quan trọng, tránh trùng lịch và chừa 15 phút nghỉ khi có thể. Gợi ý sẽ chờ bạn duyệt.</p>
           </section>
           <button type="button" onClick={clearAll} className="inline-flex items-center gap-2 px-1 text-[10px] underline underline-offset-4 transition-opacity hover:opacity-60" style={{ color: theme.muted }}><Trash2 size={12} /> Làm trống toàn bộ lịch</button>
         </aside>
 
-        <main className="min-w-0" aria-labelledby="timeline-heading">
+        <main ref={timelineRef} className="min-w-0 scroll-mt-6" aria-labelledby="timeline-heading">
           <div className="flex flex-wrap items-start justify-between gap-4 border-b pb-5" style={{ borderColor: theme.line }}>
             <div><p className="text-[9px] uppercase tracking-[.2em]" style={{ color: theme.muted }}>Lịch trình / Daily flow</p><h2 id="timeline-heading" className="mt-3 font-serif text-[clamp(27px,3vw,43px)] capitalize tracking-[-.05em]">{displayDate(day)}</h2><p className="mt-3 text-[11px]" style={{ color: theme.muted }}>Có {approvedCount} việc đã chốt · {pendingCount} việc đang chờ duyệt</p></div>
-            <div className="flex items-center gap-2"><button type="button" aria-label="Ngày trước" onClick={() => advanceDate(-1)} className="flex h-9 w-9 items-center justify-center rounded-lg border transition-colors hover:bg-[var(--soft)]" style={{ borderColor: theme.line }}><ChevronLeft size={16} /></button><input type="date" aria-label="Chọn ngày xem lịch" value={selectedDate} onChange={(e) => e.target.value && setSelectedDate(e.target.value)} className="min-w-0 max-w-[139px] rounded-lg border px-2 py-2 text-[11px]" style={{ backgroundColor: theme.panel, color: theme.text, borderColor: theme.line, colorScheme: currentTheme === 'midnight' ? 'dark' : 'light' }} /><button type="button" aria-label="Ngày tiếp theo" onClick={() => advanceDate(1)} className="flex h-9 w-9 items-center justify-center rounded-lg border transition-colors hover:bg-[var(--soft)]" style={{ borderColor: theme.line }}><ChevronRight size={16} /></button></div>
+            <div className="flex items-center gap-2"><button type="button" aria-label="Ngày trước" onClick={() => advanceDate(-1)} className="flex h-9 w-9 items-center justify-center rounded-lg border transition-colors hover:bg-[var(--soft)]" style={{ borderColor: theme.line }}><ChevronLeft size={16} /></button><input type="date" aria-label="Chọn ngày xem lịch" value={selectedDate} onChange={(e) => e.target.value && selectDate(e.target.value)} className="min-w-0 max-w-[139px] rounded-lg border px-2 py-2 text-[11px]" style={{ backgroundColor: theme.panel, color: theme.text, borderColor: theme.line, colorScheme: currentTheme === 'midnight' ? 'dark' : 'light' }} /><button type="button" aria-label="Ngày tiếp theo" onClick={() => advanceDate(1)} className="flex h-9 w-9 items-center justify-center rounded-lg border transition-colors hover:bg-[var(--soft)]" style={{ borderColor: theme.line }}><ChevronRight size={16} /></button></div>
           </div>
           {message && <div role={noticeIsError ? 'alert' : 'status'} className="my-5 flex items-start justify-between gap-4 rounded-lg border px-4 py-3 text-[11px] leading-relaxed" style={{ borderColor: noticeIsError ? theme.leadership : theme.line, backgroundColor: theme.subtle }}><div className="flex items-start gap-2"><WandSparkles size={16} className="mt-0.5 shrink-0" style={{ color: theme.accent }} />{message}</div><button onClick={() => setMessage('')} aria-label="Đóng thông báo"><X size={15} /></button></div>}
           {storageError && <p role="alert" className="mt-4 text-[11px]" style={{ color: theme.leadership }}>Trình duyệt chưa lưu được dữ liệu. Thay đổi có thể mất khi tải lại trang.</p>}
           <div className="relative mt-8">
             <div className="pointer-events-none absolute bottom-8 left-[70px] top-6 w-px sm:left-[94px]" style={{ backgroundColor: theme.line }} aria-hidden="true" />
-            {timeline.length ? timeline.map((row) => row.type === 'task' ? <TaskCard key={row.key} task={row.task} theme={theme} onApprove={approveTask} onRemove={removeScheduled} onRequeue={requeue} /> : <ZenSpace key={row.key} row={row} theme={theme} />) : <div className="py-24 text-center"><Wind size={26} className="mx-auto" style={{ color: theme.art }} /><h3 className="mt-5 font-serif text-[25px] italic">Một trang ngày còn trắng.</h3><p className="mt-3 text-[12px]" style={{ color: theme.muted }}>Thêm một công việc hoặc chọn AI Magic để bắt đầu.</p></div>}
+            {timeline.length ? timeline.map((row) => row.type === 'task' ? <TaskCard key={row.key} task={row.task} theme={theme} onApprove={approveTask} onRemove={removeScheduled} onRequeue={requeue} /> : <ZenSpace key={row.key} row={row} theme={theme} />) : <div className="py-24 text-center"><Wind size={26} className="mx-auto" style={{ color: theme.art }} /><h3 className="mt-5 font-serif text-[25px] italic">Một trang ngày còn trắng.</h3><p className="mt-3 text-[12px]" style={{ color: theme.muted }}>Thêm một công việc hoặc chọn Auto arrange để bắt đầu.</p></div>}
           </div>
           <div className="mt-8 flex items-center gap-3 border-t pt-6 text-[11px]" style={{ borderColor: theme.line, color: theme.muted }}><Coffee size={15} /> Đủ đầy, nhưng không cần vội vàng.</div>
         </main>

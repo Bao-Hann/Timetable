@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import React from 'react'
-import App, { THEMES, autoScheduleTasks } from './App.jsx'
+import App, { THEMES, autoScheduleTasks, getMonthGrid, summarizeMonth } from './App.jsx'
 
 const date = '2026-11-08'
 const fixed = (id, startTime, endTime, day = date) => ({ id, date: day, startTime, endTime, origin: 'fixed', status: 'approved' })
@@ -48,8 +48,45 @@ describe('smart planner interface', () => {
   it('switches between themes and displays the awaiting list', () => {
     render(<App />)
     expect(screen.getByText('Một dự định mới.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /AI Magic/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Auto arrange/ })).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Đổi giao diện'), { target: { value: 'midnight' } })
     expect(screen.getByLabelText('Đổi giao diện')).toHaveValue('midnight')
+  })
+})
+
+describe('monthly calendar and day drill-down', () => {
+  it('creates a Monday-first month grid across month boundaries', () => {
+    const grid = getMonthGrid(new Date(2026, 10, 1, 12))
+    expect(grid).toHaveLength(42)
+    expect(grid[0].getDay()).toBe(1)
+    expect(grid[0].getDate()).toBe(26)
+    expect(grid[41].getDate()).toBe(6)
+  })
+
+  it('counts each status and scheduled day without counting outside the selected month', () => {
+    const summary = summarizeMonth([
+      fixed('a', '08:00', '09:00'),
+      { ...fixed('b', '10:00', '11:00'), status: 'pending' },
+      fixed('other', '08:00', '09:00', '2026-12-01'),
+    ], new Date(2026, 10, 1))
+    expect(summary).toMatchObject({ total: 2, approved: 1, pending: 1, daysWithTasks: 1 })
+    expect(summary.byDate.get(date)).toHaveLength(2)
+  })
+
+  it('opens selected calendar day and updates timeline', () => {
+    render(<App />)
+    const dateButton = screen.getByRole('button', { current: 'date' })
+    fireEvent.click(dateButton)
+    expect(dateButton).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('heading', { level: 2, name: new RegExp(new Intl.DateTimeFormat('vi-VN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date()), 'i') })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Tháng tiếp theo' }))
+    const next = new Date(); next.setMonth(next.getMonth() + 1)
+    expect(screen.getByRole('heading', { name: new RegExp(new Intl.DateTimeFormat('vi-VN', { month: 'long', year: 'numeric' }).format(next), 'i') })).toBeInTheDocument()
+  })
+
+  it('shows clear Auto arrange feedback for unavailable tasks', () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: /Auto arrange/ }))
+    expect(screen.getAllByText(/Đã tự xếp|Không tìm được khoảng trống/).length).toBeGreaterThan(0)
   })
 })
