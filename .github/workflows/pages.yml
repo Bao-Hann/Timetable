@@ -13,8 +13,22 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
+      - name: Keep the built app as the only Pages publisher
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          legacy_runs="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/runs" -f event=dynamic -f head_sha="$GITHUB_SHA" --jq '.workflow_runs[] | select(.name == "pages build and deployment" and .status != "completed") | .id')"
+          for run_id in $legacy_runs; do
+            if ! gh run cancel "$run_id" --repo "$GITHUB_REPOSITORY"; then
+              test "$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json status --jq .status)" = "completed"
+            fi
+          done
       - uses: actions/setup-node@v4
         with:
           node-version: 22

@@ -68,7 +68,7 @@ Triển khai nội dung `dist/` lên dịch vụ hosting tĩnh. Cấu hình Vite
 Repo có sẵn hai workflow GitHub Actions:
 
 - **Check timetable:** chạy test, kiểm tra TypeScript và build khi push hoặc mở pull request; lưu artifact `timetable-static`.
-- **Publish GitHub Pages:** tự động kiểm tra, build và triển khai mỗi lần cập nhật `main`; cũng có thể chạy thủ công từ tab Actions. Nếu test hoặc build lỗi, bước deploy không chạy và bản web đang hoạt động được giữ lại.
+- **Publish GitHub Pages:** tự động kiểm tra, build và triển khai mỗi lần cập nhật `main`; cũng có thể chạy thủ công từ tab Actions. Nếu test hoặc build lỗi, quy trình dừng trước bước deploy. Workflow cũng dừng tác vụ Pages cũ xuất bản trực tiếp mã nguồn (nếu còn bật), để tránh ghi đè ứng dụng đã build.
 
 Để bật web trên GitHub Pages:
 
