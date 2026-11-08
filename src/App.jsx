@@ -317,6 +317,7 @@ export default function App() {
   const [message, setMessage] = useState('');
   const [noticeIsError, setNoticeIsError] = useState(false);
   const [storageError, setStorageError] = useState(false);
+  const [formFeedback, setFormFeedback] = useState(null);
   const theme = THEMES[currentTheme];
   const displayedMonth = useMemo(() => fromIso(visibleMonth), [visibleMonth]);
   const day = fromIso(selectedDate);
@@ -331,6 +332,10 @@ export default function App() {
   }, [fixedTasks, floatingTasks, scheduledTasks, currentTheme]);
 
   const say = (text, error = false) => { setMessage(text); setNoticeIsError(error); };
+  const reportForm = (text, error = false) => {
+    setFormFeedback({ text, error });
+    say(text, error);
+  };
   const selectDate = (key, scroll = false) => {
     const next = fromIso(key);
     setSelectedDate(key);
@@ -347,29 +352,34 @@ export default function App() {
     const cappedDay = Math.min(currentDay, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate());
     selectDate(isoDate(new Date(next.getFullYear(), next.getMonth(), cappedDay, 12)));
   };
-  const updateDraft = (key, value) => setDraft((prev) => ({ ...prev, [key]: value }));
+  const updateDraft = (key, value) => { setFormFeedback(null); setDraft((prev) => ({ ...prev, [key]: value })); };
 
   function addTask(event) {
     event.preventDefault();
     const title = draft.title.trim();
-    if (!title) return say('Bạn hãy nhập tên công việc.', true);
+    if (!title) return reportForm('Hãy nhập tên công việc để thêm vào lịch.', true);
     if (mode === 'floating') {
-      const estimatedDuration = Number(draft.duration);
-      if (!Number.isInteger(estimatedDuration) || estimatedDuration < 5 || estimatedDuration > 600) return say('Thời lượng phải từ 5 đến 600 phút.', true);
+      // Không dùng ràng buộc bước 5 phút của trình duyệt: người dùng có thể nhập 17, 23... phút.
+      const estimatedDuration = draft.duration.trim() === '' ? NaN : Number(draft.duration);
+      if (!Number.isInteger(estimatedDuration) || estimatedDuration < 5 || estimatedDuration > 600) {
+        return reportForm('Hãy nhập thời lượng từ 5 đến 600 phút (ví dụ: 30, 45 hoặc 60).', true);
+      }
       setFloatingTasks((prev) => [...prev, { id: makeId(), title, category: draft.category, estimatedDuration, priority: draft.priority }]);
-      say('Đã thêm vào danh sách chờ. Bấm Auto arrange để xếp lịch.');
+      reportForm(`Đã thêm “${title}” vào Waiting List. Chọn Auto arrange khi muốn xếp lịch.`);
     } else {
       const start = toMinutes(draft.startTime);
       const end = toMinutes(draft.endTime);
-      if (!draft.date || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return say('Kiểm tra lại ngày, giờ bắt đầu và kết thúc.', true);
+      if (!draft.date || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+        return reportForm('Hãy kiểm tra ngày, giờ bắt đầu và giờ kết thúc.', true);
+      }
       if (scheduledTasks.some((task) => task.date === draft.date && start < toMinutes(task.endTime) && end > toMinutes(task.startTime))) {
-        return say('Khoảng giờ này đã có công việc. Hãy chọn giờ khác.', true);
+        return reportForm('Khoảng giờ này đã có công việc. Hãy chọn giờ khác.', true);
       }
       const item = { id: makeId(), date: draft.date, startTime: draft.startTime, endTime: draft.endTime, title, category: draft.category, origin: 'fixed', status: 'approved' };
       setFixedTasks((prev) => [...prev, item]);
       setScheduledTasks((prev) => [...prev, item]);
       selectDate(draft.date);
-      say('Đã cố định công việc trên lịch.');
+      reportForm(`Đã cố định “${title}” vào lịch ngày ${draft.date}.`);
     }
     setDraft((prev) => ({ ...prev, title: '' }));
   }
@@ -461,18 +471,19 @@ export default function App() {
           <section className="rounded-2xl border px-5 py-6 sm:px-7" style={{ borderColor: theme.line, backgroundColor: theme.panel }}>
             <div className="mb-6 flex items-start justify-between gap-3"><div><p className="text-[9px] uppercase tracking-[.2em]" style={{ color: theme.muted }}>Ghi một điều cần làm</p><h2 className="mt-2 font-serif text-[27px] tracking-[-.045em]">Một dự định mới.</h2></div><Plus size={18} strokeWidth={1.5} style={{ color: theme.accent }} /></div>
             <div className="mb-5 flex rounded-lg p-1 text-[11px]" style={{ backgroundColor: theme.subtle }}>
-              {[['floating', 'Linh hoạt'], ['fixed', 'Cố định giờ']].map(([key, label]) => <button type="button" key={key} onClick={() => setMode(key)} className="flex-1 rounded-md px-2 py-2.5 transition-colors duration-300" style={{ backgroundColor: mode === key ? theme.page : 'transparent', color: mode === key ? theme.text : theme.muted }}>{label}</button>)}
+              {[['floating', 'Linh hoạt'], ['fixed', 'Cố định giờ']].map(([key, label]) => <button type="button" key={key} onClick={() => { setMode(key); setFormFeedback(null); }} className="flex-1 rounded-md px-2 py-2.5 transition-colors duration-300" style={{ backgroundColor: mode === key ? theme.page : 'transparent', color: mode === key ? theme.text : theme.muted }}>{label}</button>)}
             </div>
-            <form onSubmit={addTask} className="space-y-5">
+            <form onSubmit={addTask} noValidate aria-label="Thêm công việc" className="space-y-5">
               <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Tên công việc</span><input required maxLength={160} value={draft.title} onChange={(e) => updateDraft('title', e.target.value)} placeholder="Bạn muốn làm điều gì?" className={inputBase} style={{ color: theme.text, borderColor: theme.line }} /></label>
               <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Nhóm</span><select value={draft.category} onChange={(e) => updateDraft('category', e.target.value)} className={inputBase} style={{ color: theme.text, backgroundColor: theme.panel, borderColor: theme.line }}>{GROUPS.map((group) => <option value={group.id} key={group.id}>{group.label}</option>)}</select></label>
               {mode === 'floating' ? <div className="grid grid-cols-2 gap-4">
-                <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ước tính (phút)</span><input type="number" min={5} max={600} step={5} value={draft.duration} onChange={(e) => updateDraft('duration', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line }} /></label>
+                <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ước tính (phút)</span><input type="number" min={5} max={600} step={1} required value={draft.duration} onChange={(e) => updateDraft('duration', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line }} /></label>
                 <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ưu tiên</span><select value={draft.priority} onChange={(e) => updateDraft('priority', e.target.value)} className={inputBase} style={{ color: theme.text, backgroundColor: theme.panel, borderColor: theme.line }}><option value="high">Quan trọng</option><option value="normal">Bình thường</option><option value="low">Có thể để sau</option></select></label>
               </div> : <><label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ngày thực hiện</span><input type="date" required value={draft.date} onChange={(e) => updateDraft('date', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line, colorScheme: currentTheme === 'midnight' ? 'dark' : 'light' }} /></label>
                 <div className="grid grid-cols-2 gap-4"><label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Bắt đầu</span><input type="time" value={draft.startTime} onChange={(e) => updateDraft('startTime', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line, colorScheme: currentTheme === 'midnight' ? 'dark' : 'light' }} /></label><label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Kết thúc</span><input type="time" value={draft.endTime} onChange={(e) => updateDraft('endTime', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line, colorScheme: currentTheme === 'midnight' ? 'dark' : 'light' }} /></label></div>
               </>}
               <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3.5 text-[12px] font-medium transition-opacity duration-300 hover:opacity-85" style={{ backgroundColor: theme.accent, color: currentTheme === 'midnight' || currentTheme === 'botanical' ? '#121212' : '#FFFFFF' }}><Plus size={16} /> {mode === 'floating' ? 'Thêm vào danh sách chờ' : 'Cố định vào lịch'} <ArrowRight size={14} /></button>
+              {formFeedback && <p role={formFeedback.error ? 'alert' : 'status'} className="rounded-lg px-3 py-2.5 text-[11px] leading-relaxed" style={{ backgroundColor: rgba(formFeedback.error ? theme.leadership : theme.research, .1), color: formFeedback.error ? theme.leadership : theme.text }}>{formFeedback.text}</p>}
             </form>
           </section>
 
