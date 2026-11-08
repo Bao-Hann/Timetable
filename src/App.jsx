@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight, CalendarDays, Check, CheckCheck, ChevronLeft, ChevronRight,
-  Clock3, Coffee, Download, Flower2, Leaf, NotebookPen, Plus, RotateCcw, Sparkles, Trash2,
+  Clock3, Coffee, Download, Flower2, Leaf, NotebookPen, Pencil, Plus, RotateCcw, Sparkles, Trash2,
   WandSparkles, Wind, X,
 } from 'lucide-react';
 
@@ -367,7 +367,7 @@ function GroupBadge({ category, theme }) {
   </span>;
 }
 
-function TaskCard({ task, theme, onApprove, onRemove, onRequeue, onRemoveSeries, onEditNote }) {
+function TaskCard({ task, theme, onApprove, onRemove, onRequeue, onRemoveSeries, onEditNote, onEditTask }) {
   const pending = task.status === 'pending';
   const accent = theme[task.category] ?? theme.accent;
   return <div className="group grid grid-cols-[51px_12px_minmax(0,1fr)] gap-3 pb-4 sm:grid-cols-[70px_14px_minmax(0,1fr)] sm:gap-4">
@@ -380,6 +380,7 @@ function TaskCard({ task, theme, onApprove, onRemove, onRequeue, onRemoveSeries,
         <div className="flex items-center gap-1.5">
           {pending ? <button type="button" aria-label={`Duyệt ${task.title}`} title="Duyệt công việc" onClick={() => onApprove(task.id)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors hover:bg-[var(--soft)]" style={{ borderColor: theme.line, color: theme.accent }}><Check size={15} /></button>
             : <span className="inline-flex items-center gap-1 text-[10px]" style={{ color: theme.muted }}><CheckCheck size={13} /> Đã chốt</span>}
+          <button type="button" onClick={() => onEditTask(task, false)} title="Sửa công việc" aria-label={`Sửa ${task.title}`} className="inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><Pencil size={14} /></button>
           <button type="button" onClick={() => onEditNote(task)} title="Xem hoặc sửa ghi chú" aria-label={`Ghi chú ${task.title}`} className="inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><NotebookPen size={14} /></button>
           {task.repeatGroupId && <button type="button" onClick={() => onRemoveSeries(task.repeatGroupId)} aria-label={`Xóa cả 8 buổi: ${task.title}`} title="Xóa toàn bộ chuỗi 8 buổi" className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-dashed transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted, borderColor: theme.line }}><Trash2 size={14} /></button>}
           {task.origin === 'floating' && <button type="button" onClick={() => onRequeue(task.id)} aria-label={`Trả lại danh sách chờ: ${task.title}`} title="Trả lại danh sách chờ" className="inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><RotateCcw size={14} /></button>}
@@ -420,6 +421,8 @@ export default function App() {
   const [editingPlan, setEditingPlan] = useState(null);
   const [editingNoteTask, setEditingNoteTask] = useState(null);
   const [noteText, setNoteText] = useState('');
+  const [editingTask, setEditingTask] = useState(null);
+  const [editError, setEditError] = useState('');
   const [draft, setDraft] = useState({ title: '', note: '', category: 'academic', duration: '45', timesPerWeek: '3', priority: 'normal', date: isoDate(new Date()), startTime: '09:00', endTime: '10:00' });
   const [message, setMessage] = useState('');
   const [noticeIsError, setNoticeIsError] = useState(false);
@@ -476,6 +479,65 @@ export default function App() {
     setEditingNoteTask(null);
     say('Đã lưu ghi chú công việc.');
   }
+  function openEditTask(task, waiting) {
+    setEditingTask({
+      id: task.id, waiting, title: task.title || '', note: task.note || '',
+      category: task.category || 'academic', priority: task.priority || 'normal',
+      estimatedDuration: String(task.estimatedDuration || 45),
+      date: task.date || task.skillWeekStart || selectedDate,
+      startTime: task.startTime || '09:00', endTime: task.endTime || '10:00',
+    });
+    setEditError('');
+  }
+  function saveEditedTask(event) {
+    event.preventDefault();
+    if (!editingTask) return;
+    const original = editingTask.waiting
+      ? floatingTasks.find((task) => task.id === editingTask.id)
+      : scheduledTasks.find((task) => task.id === editingTask.id);
+    if (!original) { setEditError('Công việc không còn trong lịch. Hãy đóng rồi mở lại.'); return; }
+    const title = editingTask.title.trim();
+    if (!title) { setEditError('Hãy nhập tên công việc.'); return; }
+    const note = editingTask.note.slice(0, 5000);
+    const category = original.repeatGroupId ? 'school' : editingTask.category;
+    if (editingTask.waiting) {
+      const duration = Number(editingTask.estimatedDuration);
+      if (!Number.isInteger(duration) || duration < 5 || duration > 600) {
+        setEditError('Thời lượng phải từ 5 đến 600 phút.'); return;
+      }
+      let nextWeek = original.skillWeekStart;
+      if (original.skillWeekStart) {
+        try { nextWeek = startOfWeekKey(editingTask.date); }
+        catch { setEditError('Ngày chọn cho tuần luyện kỹ năng không hợp lệ.'); return; }
+      }
+      setFloatingTasks((prev) => prev.map((task) => task.id === original.id
+        ? { ...task, title, note, category, priority: editingTask.priority, estimatedDuration: duration, ...(nextWeek ? { skillWeekStart: nextWeek } : {}) }
+        : task));
+    } else {
+      const start = toMinutes(editingTask.startTime);
+      const end = toMinutes(editingTask.endTime);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(editingTask.date || '') || isoDate(fromIso(editingTask.date)) !== editingTask.date ||
+          !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+        setEditError('Ngày hoặc giờ không hợp lệ.'); return;
+      }
+      if (original.skillSeriesId && startOfWeekKey(editingTask.date) !== original.skillWeekStart) {
+        setEditError('Buổi luyện kỹ năng này thuộc tuần đã chọn. Hãy đổi ngày trong cùng tuần hoặc trả về danh sách chờ.'); return;
+      }
+      const conflict = scheduledTasks.some((task) => task.id !== original.id && task.date === editingTask.date &&
+        start < toMinutes(task.endTime) && end > toMinutes(task.startTime));
+      if (conflict) { setEditError('Khung giờ này trùng với công việc khác. Lịch cũ vẫn được giữ nguyên.'); return; }
+      const changed = { ...original, title, note, category, date: editingTask.date,
+        startTime: editingTask.startTime, endTime: editingTask.endTime };
+      setScheduledTasks((prev) => prev.map((task) => task.id === original.id ? changed : task));
+      if (original.origin === 'fixed') {
+        setFixedTasks((prev) => prev.map((task) => task.id === original.id ? changed : task));
+      }
+      selectDate(editingTask.date);
+    }
+    setEditingTask(null);
+    say('Đã lưu chỉnh sửa công việc mà không thay đổi các việc khác.');
+  }
+
   function saveFuturePlan(event) {
     event.preventDefault();
     const title = planDraft.title.trim();
@@ -710,6 +772,7 @@ export default function App() {
                   {task.skillWeekStart && <p className="mt-1 text-[10px]" style={{ color: theme.muted }}>Buổi {task.skillIndex}/{task.skillTotal} · tuần từ {task.skillWeekStart.split('-').reverse().join('/')}</p>}
                   {task.note && <p className="mt-1 whitespace-pre-wrap break-words text-[10px]" style={{ color: theme.muted }}>{task.note}</p>}
                 </div>
+                <button type="button" onClick={() => openEditTask(task, true)} aria-label={`Sửa ${task.title}`} title="Sửa công việc" className="rounded-md p-2 transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><Pencil size={14}/></button>
                 <button type="button" onClick={() => editNote(task)} aria-label={`Ghi chú ${task.title}`} title="Xem hoặc sửa ghi chú" className="rounded-md p-2 transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><NotebookPen size={14}/></button>
                 <button type="button" onClick={() => removeFloating(task.id)} className="rounded-md p-2 transition-colors hover:bg-[var(--soft)]" aria-label={`Xóa khỏi danh sách chờ: ${task.title}`} style={{ color: theme.muted }}><X size={14} /></button>
               </div>) : <p className="py-7 text-center font-serif text-[17px] italic" style={{ color: theme.muted }}>Mọi dự định đều đã có chỗ.</p>}
@@ -731,7 +794,7 @@ export default function App() {
           {storageError && <p role="alert" className="mt-4 text-[11px]" style={{ color: theme.leadership }}>Trình duyệt chưa lưu được dữ liệu. Thay đổi có thể mất khi tải lại trang.</p>}
           <div className="relative mt-8">
             <div className="pointer-events-none absolute bottom-8 left-[70px] top-6 w-px sm:left-[94px]" style={{ backgroundColor: theme.line }} aria-hidden="true" />
-            {timeline.length ? timeline.map((row) => row.type === 'task' ? <TaskCard key={row.key} task={row.task} theme={theme} onApprove={approveTask} onRemove={removeScheduled} onRequeue={requeue} onRemoveSeries={removeSeries} onEditNote={editNote} /> : <ZenSpace key={row.key} row={row} theme={theme} />) : <div className="py-24 text-center"><Wind size={26} className="mx-auto" style={{ color: theme.art }} /><h3 className="mt-5 font-serif text-[25px] italic">Một trang ngày còn trắng.</h3><p className="mt-3 text-[12px]" style={{ color: theme.muted }}>Thêm một công việc hoặc chọn Auto arrange để bắt đầu.</p></div>}
+            {timeline.length ? timeline.map((row) => row.type === 'task' ? <TaskCard key={row.key} task={row.task} theme={theme} onApprove={approveTask} onRemove={removeScheduled} onRequeue={requeue} onRemoveSeries={removeSeries} onEditNote={editNote} onEditTask={openEditTask} /> : <ZenSpace key={row.key} row={row} theme={theme} />) : <div className="py-24 text-center"><Wind size={26} className="mx-auto" style={{ color: theme.art }} /><h3 className="mt-5 font-serif text-[25px] italic">Một trang ngày còn trắng.</h3><p className="mt-3 text-[12px]" style={{ color: theme.muted }}>Thêm một công việc hoặc chọn Auto arrange để bắt đầu.</p></div>}
           </div>
           <div className="mt-8 flex items-center gap-3 border-t pt-6 text-[11px]" style={{ borderColor: theme.line, color: theme.muted }}><Coffee size={15} /> Đủ đầy, nhưng không cần vội vàng.</div>
         </main>
