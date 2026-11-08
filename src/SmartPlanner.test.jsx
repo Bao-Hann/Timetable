@@ -363,7 +363,7 @@ describe('daily protected hours and automatic adjustments', () => {
     }))
     render(<App />)
     const form = screen.getByRole('form', { name: 'Thêm công việc' })
-    fireEvent.click(within(form).getByRole('button', { name: 'Cố định giờ' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cố định giờ' }))
     fireEvent.change(within(form).getByPlaceholderText('Bạn muốn làm điều gì?'), { target: { value: 'Lịch cố định mới' } })
     fireEvent.change(within(form).getByLabelText('Ngày thực hiện'), { target: { value: '2027-01-18' } })
     fireEvent.change(within(form).getByLabelText('Bắt đầu'), { target: { value: '09:30' } })
