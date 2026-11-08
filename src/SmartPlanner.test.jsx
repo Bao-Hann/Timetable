@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeEach } from 'vitest'
+import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import React from 'react'
-import App, { THEMES, autoScheduleTasks, getMonthGrid, summarizeMonth } from './App.jsx'
+import App, { THEMES, autoScheduleTasks, getMonthGrid, summarizeMonth, weeklyClassDates, createWeeklyClassSeries } from './App.jsx'
 
 const date = '2026-11-08'
 const fixed = (id, startTime, endTime, day = date) => ({ id, date: day, startTime, endTime, origin: 'fixed', status: 'approved' })
@@ -112,5 +112,84 @@ describe('waiting list input regression', () => {
     fireEvent.click(within(form).getByRole('button', { name: 'Thêm vào danh sách chờ' }))
     expect(within(form).getByRole('alert')).toHaveTextContent('Hãy nhập thời lượng')
     expect(screen.queryByText('Đọc sách')).not.toBeInTheDocument()
+  })
+})
+
+describe('eight-week recurring school lessons', () => {
+  it('creates exactly eight same-weekday dates and handles year crossing', () => {
+    expect(weeklyClassDates('2026-12-21')).toEqual([
+      '2026-12-21', '2026-12-28', '2027-01-04', '2027-01-11',
+      '2027-01-18', '2027-01-25', '2027-02-01', '2027-02-08',
+    ])
+    expect(() => weeklyClassDates('2026-02-30')).toThrow('Ngày bắt đầu không tồn tại')
+  })
+
+  it('creates a linked eight-lesson series on a fixed weekday', () => {
+    let nextId = 0
+    const input = { title: 'Toán cao cấp', date: '2026-11-09', startTime: '07:00', endTime: '09:00' }
+    const series = createWeeklyClassSeries(input, [], () => String(++nextId))
+    expect(series).toHaveLength(8)
+    expect(new Set(series.map(x => x.repeatGroupId)).size).toBe(1)
+    expect(new Set(series.map(x => x.id)).size).toBe(8)
+    expect(series.map(x => x.repeatIndex)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    expect(series.map(x => x.category)).toEqual(Array(8).fill('school'))
+    expect(series.every(x => x.startTime === '07:00' && x.endTime === '09:00' && x.status === 'approved')).toBe(true)
+  })
+
+  it('rejects the whole series if any of eight future dates has a conflicting task', () => {
+    const input = { title: 'Tiếng Anh', date: '2026-11-09', startTime: '08:00', endTime: '10:00' }
+    const reservations = [fixed('conflict', '09:00', '11:00', '2026-11-30')]
+    expect(() => createWeeklyClassSeries(input, reservations, () => 'id')).toThrow('30/11/2026')
+    expect(reservations).toHaveLength(1)
+    expect(() => createWeeklyClassSeries({ ...input, startTime: '12:00', endTime: '11:00' }, [])).toThrow('không hợp lệ')
+  })
+
+  it('adds all eight lessons from the form and displays a confirmation', () => {
+    render(<App />)
+    const form = screen.getByRole('form', { name: 'Thêm công việc' })
+    fireEvent.change(within(form).getByPlaceholderText('Bạn muốn làm điều gì?'), { target: { value: 'Lịch học môn Toán' } })
+    fireEvent.change(within(form).getByLabelText('Nhóm'), { target: { value: 'school' } })
+    expect(within(form).getByText('Lịch học cố định · 8 tuần liên tiếp')).toBeInTheDocument()
+    fireEvent.change(within(form).getByLabelText('Ngày thực hiện'), { target: { value: '2027-03-08' } })
+    fireEvent.change(within(form).getByLabelText('Bắt đầu'), { target: { value: '07:00' } })
+    fireEvent.change(within(form).getByLabelText('Kết thúc'), { target: { value: '09:00' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Thêm 8 buổi đi học' }))
+    expect(within(form).getByRole('status')).toHaveTextContent('Đã thêm đủ 8 buổi')
+    const stored = JSON.parse(localStorage.getItem('nhip.smart-planner.v1'))
+    expect(stored.scheduledTasks.filter(x => x.title === 'Lịch học môn Toán')).toHaveLength(8)
+    expect(stored.fixedTasks.filter(x => x.title === 'Lịch học môn Toán')).toHaveLength(8)
+  })
+
+  it('shows an inline error and never adds partial lessons on conflict', () => {
+    render(<App />)
+    const form = screen.getByRole('form', { name: 'Thêm công việc' })
+    fireEvent.change(within(form).getByPlaceholderText('Bạn muốn làm điều gì?'), { target: { value: 'Học thể dục' } })
+    fireEvent.change(within(form).getByLabelText('Nhóm'), { target: { value: 'school' } })
+    fireEvent.change(within(form).getByLabelText('Ngày thực hiện'), { target: { value: '2027-03-08' } })
+    fireEvent.change(within(form).getByLabelText('Bắt đầu'), { target: { value: '07:00' } })
+    fireEvent.change(within(form).getByLabelText('Kết thúc'), { target: { value: '09:00' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Thêm 8 buổi đi học' }))
+    fireEvent.change(within(form).getByPlaceholderText('Bạn muốn làm điều gì?'), { target: { value: 'Học thể dục lần hai' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Thêm 8 buổi đi học' }))
+    expect(within(form).getByRole('alert')).toHaveTextContent('bị trùng giờ')
+    const stored = JSON.parse(localStorage.getItem('nhip.smart-planner.v1'))
+    expect(stored.scheduledTasks.filter(x => x.category === 'school')).toHaveLength(8)
+  })
+
+  it('can remove a whole linked series without affecting unrelated tasks', () => {
+    const series = createWeeklyClassSeries({ title: 'Lớp 8 tuần', date: '2026-11-09', startTime: '07:00', endTime: '09:00' }, [], (() => { let i = 0; return () => String(++i) })())
+    localStorage.setItem('nhip.smart-planner.v1', JSON.stringify({
+      fixedTasks: series,
+      floatingTasks: [],
+      scheduledTasks: series,
+      currentTheme: 'zen',
+    }))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Chọn ngày xem lịch'), { target: { value: '2026-11-09' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Xóa cả 8 buổi: Lớp 8 tuần' }))
+    expect(confirm).toHaveBeenCalled()
+    const stored = JSON.parse(localStorage.getItem('nhip.smart-planner.v1'))
+    expect(stored.scheduledTasks.filter(x => x.category === 'school')).toHaveLength(0)
   })
 })
