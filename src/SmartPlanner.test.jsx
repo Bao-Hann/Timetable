@@ -75,17 +75,18 @@ describe('monthly calendar and day drill-down', () => {
 
   it('opens selected calendar day and updates timeline', () => {
     render(<App />)
-    const dateButton = screen.getByRole('button', { name: /Xem ngày 08\/11\/2026:/ })
+    const dateButton = screen.getByRole('button', { current: 'date' })
     fireEvent.click(dateButton)
     expect(dateButton).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('heading', { name: /chủ nhật, 8 tháng 11 năm 2026/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: new RegExp(new Intl.DateTimeFormat('vi-VN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date()), 'i') })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Tháng tiếp theo' }))
-    expect(screen.getByRole('heading', { name: /tháng 12 năm 2026/i })).toBeInTheDocument()
+    const next = new Date(); next.setMonth(next.getMonth() + 1)
+    expect(screen.getByRole('heading', { name: new RegExp(new Intl.DateTimeFormat('vi-VN', { month: 'long', year: 'numeric' }).format(next), 'i') })).toBeInTheDocument()
   })
 
   it('shows clear Auto arrange feedback for unavailable tasks', () => {
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: /Auto arrange/ }))
-    expect(screen.getByText(/Đã tự xếp|Không tìm được khoảng trống/)).toBeInTheDocument()
+    expect(screen.getAllByText(/Đã tự xếp|Không tìm được khoảng trống/).length).toBeGreaterThan(0)
   })
 })
