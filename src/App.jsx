@@ -367,7 +367,7 @@ function GroupBadge({ category, theme }) {
   </span>;
 }
 
-function TaskCard({ task, theme, onApprove, onRemove, onRequeue, onRemoveSeries }) {
+function TaskCard({ task, theme, onApprove, onRemove, onRequeue, onRemoveSeries, onEditNote }) {
   const pending = task.status === 'pending';
   const accent = theme[task.category] ?? theme.accent;
   return <div className="group grid grid-cols-[51px_12px_minmax(0,1fr)] gap-3 pb-4 sm:grid-cols-[70px_14px_minmax(0,1fr)] sm:gap-4">
@@ -380,15 +380,17 @@ function TaskCard({ task, theme, onApprove, onRemove, onRequeue, onRemoveSeries 
         <div className="flex items-center gap-1.5">
           {pending ? <button type="button" aria-label={`Duyệt ${task.title}`} title="Duyệt công việc" onClick={() => onApprove(task.id)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors hover:bg-[var(--soft)]" style={{ borderColor: theme.line, color: theme.accent }}><Check size={15} /></button>
             : <span className="inline-flex items-center gap-1 text-[10px]" style={{ color: theme.muted }}><CheckCheck size={13} /> Đã chốt</span>}
+          <button type="button" onClick={() => onEditNote(task)} title="Xem hoặc sửa ghi chú" aria-label={`Ghi chú ${task.title}`} className="inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><NotebookPen size={14} /></button>
           {task.repeatGroupId && <button type="button" onClick={() => onRemoveSeries(task.repeatGroupId)} aria-label={`Xóa cả 8 buổi: ${task.title}`} title="Xóa toàn bộ chuỗi 8 buổi" className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-dashed transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted, borderColor: theme.line }}><Trash2 size={14} /></button>}
           {task.origin === 'floating' && <button type="button" onClick={() => onRequeue(task.id)} aria-label={`Trả lại danh sách chờ: ${task.title}`} title="Trả lại danh sách chờ" className="inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><RotateCcw size={14} /></button>}
           <button type="button" onClick={() => onRemove(task.id)} aria-label={`Xóa ${task.title}`} title="Xóa công việc" className="inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><Trash2 size={14} /></button>
         </div>
       </div>
       <h3 className="mt-3 text-[13px] font-medium leading-relaxed sm:text-[14px]" style={{ color: theme.text }}>{task.title}</h3>
+      {task.note && <p className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed" style={{ color: theme.muted }}>{task.note}</p>}
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px]" style={{ color: theme.muted }}>
         <span className="inline-flex items-center gap-1.5 tabular-nums"><Clock3 size={12} /> {task.startTime} — {task.endTime}</span>
-        <span>{task.repeatGroupId ? `Đi học · buổi ${task.repeatIndex}/${task.repeatTotal}` : pending ? 'Gợi ý · chờ duyệt' : task.origin === 'fixed' ? 'Lịch cố định' : 'Đã xếp tự động'}</span>
+        <span>{task.skillSeriesId ? `Luyện kỹ năng · buổi ${task.skillIndex}/${task.skillTotal}` : task.repeatGroupId ? `Đi học · buổi ${task.repeatIndex}/${task.repeatTotal}` : pending ? 'Gợi ý · chờ duyệt' : task.origin === 'fixed' ? 'Lịch cố định' : 'Đã xếp tự động'}</span>
       </div>
     </article>
   </div>;
@@ -416,6 +418,8 @@ export default function App() {
   const [mode, setMode] = useState('floating');
   const [planDraft, setPlanDraft] = useState({ title: '', note: '', targetDate: '' });
   const [editingPlan, setEditingPlan] = useState(null);
+  const [editingNoteTask, setEditingNoteTask] = useState(null);
+  const [noteText, setNoteText] = useState('');
   const [draft, setDraft] = useState({ title: '', note: '', category: 'academic', duration: '45', timesPerWeek: '3', priority: 'normal', date: isoDate(new Date()), startTime: '09:00', endTime: '10:00' });
   const [message, setMessage] = useState('');
   const [noticeIsError, setNoticeIsError] = useState(false);
@@ -456,18 +460,78 @@ export default function App() {
     selectDate(isoDate(new Date(next.getFullYear(), next.getMonth(), cappedDay, 12)));
   };
   const updateDraft = (key, value) => { setFormFeedback(null); setDraft((prev) => ({ ...prev, [key]: value })); };
+  function editNote(task) {
+    setEditingNoteTask({ id: task.id, title: task.title, floating: !task.date });
+    setNoteText(task.note || '');
+  }
+  function saveNote() {
+    if (!editingNoteTask) return;
+    const note = noteText.slice(0, 5000);
+    if (editingNoteTask.floating) {
+      setFloatingTasks((prev) => prev.map((task) => task.id === editingNoteTask.id ? { ...task, note } : task));
+    } else {
+      setScheduledTasks((prev) => prev.map((task) => task.id === editingNoteTask.id ? { ...task, note } : task));
+      setFixedTasks((prev) => prev.map((task) => task.id === editingNoteTask.id ? { ...task, note } : task));
+    }
+    setEditingNoteTask(null);
+    say('Đã lưu ghi chú công việc.');
+  }
+  function saveFuturePlan(event) {
+    event.preventDefault();
+    const title = planDraft.title.trim();
+    if (!title) return;
+    const details = { title, note: planDraft.note.slice(0, 5000), targetDate: planDraft.targetDate };
+    if (editingPlan) {
+      setFuturePlans((prev) => prev.map((plan) => plan.id === editingPlan ? { ...plan, ...details } : plan));
+    } else {
+      setFuturePlans((prev) => [...prev, { id: makeId(), ...details }]);
+    }
+    setPlanDraft({ title: '', note: '', targetDate: '' });
+    setEditingPlan(null);
+    say('Đã lưu dự định tương lai.');
+  }
+  function startEditPlan(plan) {
+    setEditingPlan(plan.id);
+    setPlanDraft({ title: plan.title, note: plan.note || '', targetDate: plan.targetDate || '' });
+  }
+  function downloadBackup() {
+    try {
+      const payload = { version: 2, exportedAt: new Date().toISOString(), fixedTasks, floatingTasks, scheduledTasks, futurePlans, currentTheme };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'nhip-sao-luu-' + isoDate(new Date()) + '.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      say('Đã tạo bản sao lịch và ghi chú. Hãy lưu tệp ở nơi an toàn.');
+    } catch {
+      say('Không thể tải bản sao trên trình duyệt này.', true);
+    }
+  }
 
   function addTask(event) {
     event.preventDefault();
     const title = draft.title.trim();
     if (!title) return reportForm('Hãy nhập tên công việc để thêm vào lịch.', true);
+    if (mode === 'skill') {
+      try {
+        const skills = createSkillSessions({ ...draft, title });
+        setFloatingTasks((prev) => [...prev, ...skills]);
+        reportForm(`Đã tạo ${skills.length} buổi luyện kỹ năng trong tuần bắt đầu ${skills[0].skillWeekStart.split('-').reverse().join('/')}. Bấm Auto arrange tuần để xếp lịch.`);
+        setDraft((prev) => ({ ...prev, title: '', note: '' }));
+      } catch (error) { reportForm(error instanceof Error ? error.message : 'Lịch kỹ năng không hợp lệ.', true); }
+      return;
+    }
     if (mode === 'floating') {
       // Không dùng ràng buộc bước 5 phút của trình duyệt: người dùng có thể nhập 17, 23... phút.
       const estimatedDuration = draft.duration.trim() === '' ? NaN : Number(draft.duration);
       if (!Number.isInteger(estimatedDuration) || estimatedDuration < 5 || estimatedDuration > 600) {
         return reportForm('Hãy nhập thời lượng từ 5 đến 600 phút (ví dụ: 30, 45 hoặc 60).', true);
       }
-      setFloatingTasks((prev) => [...prev, { id: makeId(), title, category: draft.category, estimatedDuration, priority: draft.priority }]);
+      setFloatingTasks((prev) => [...prev, { id: makeId(), title, note: draft.note || '', category: draft.category, estimatedDuration, priority: draft.priority }]);
       reportForm(`Đã thêm “${title}” vào Waiting List. Chọn Auto arrange khi muốn xếp lịch.`);
     } else {
       if (draft.category === 'school') {
@@ -477,7 +541,7 @@ export default function App() {
           setScheduledTasks((prev) => [...prev, ...series]);
           selectDate(draft.date);
           reportForm(`Đã thêm đủ 8 buổi “${title}” vào lịch, từ ${series[0].date.split('-').reverse().join('/')} đến ${series[7].date.split('-').reverse().join('/')}.`);
-          setDraft((prev) => ({ ...prev, title: '' }));
+          setDraft((prev) => ({ ...prev, title: '', note: '' }));
         } catch (error) {
           reportForm(error instanceof Error ? error.message : 'Không thể thêm lịch học.', true);
         }
@@ -491,13 +555,13 @@ export default function App() {
       if (scheduledTasks.some((task) => task.date === draft.date && start < toMinutes(task.endTime) && end > toMinutes(task.startTime))) {
         return reportForm('Khoảng giờ này đã có công việc. Hãy chọn giờ khác.', true);
       }
-      const item = { id: makeId(), date: draft.date, startTime: draft.startTime, endTime: draft.endTime, title, category: draft.category, origin: 'fixed', status: 'approved' };
+      const item = { id: makeId(), date: draft.date, startTime: draft.startTime, endTime: draft.endTime, title, note: draft.note || '', category: draft.category, origin: 'fixed', status: 'approved' };
       setFixedTasks((prev) => [...prev, item]);
       setScheduledTasks((prev) => [...prev, item]);
       selectDate(draft.date);
       reportForm(`Đã cố định “${title}” vào lịch ngày ${draft.date}.`);
     }
-    setDraft((prev) => ({ ...prev, title: '' }));
+    setDraft((prev) => ({ ...prev, title: '', note: '' }));
   }
 
   function handleAutoSchedule() {
@@ -520,6 +584,17 @@ export default function App() {
     if (typeof window.requestAnimationFrame === 'function') {
       window.requestAnimationFrame(() => timelineRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }));
     }
+  }
+
+  function arrangeSelectedWeek() {
+    const result = autoArrangeSkillWeek(floatingTasks, scheduledTasks, selectedDate);
+    if (!result.placed.length) {
+      return say('Tuần đang chọn không còn buổi kỹ năng phù hợp để xếp. Hãy kiểm tra tuần hoặc thời lượng.', true);
+    }
+    setScheduledTasks((prev) => [...prev, ...result.placed]);
+    setFloatingTasks(result.remaining);
+    selectDate(result.placed[0].date, true);
+    say(`Đã đề xuất ${result.placed.length} buổi luyện kỹ năng trong một tuần. Hãy duyệt từng buổi.`);
   }
 
   function approveTask(id) {
