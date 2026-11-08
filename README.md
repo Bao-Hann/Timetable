@@ -4,6 +4,8 @@ Một khoảng lặng để sắp xếp ngày của bạn.
 
 Ứng dụng lịch trình cá nhân với giao diện tối giản: nền giấy ngà, typography serif, màu pastel trầm và timeline theo giờ.
 
+Web: [Nhịp — lịch trình cá nhân](https://bao-hann.github.io/Timetable/)
+
 Repo: [Bao-Hann/Timetable](https://github.com/Bao-Hann/Timetable)
 
 ## Tính năng
@@ -66,13 +68,13 @@ Triển khai nội dung `dist/` lên dịch vụ hosting tĩnh. Cấu hình Vite
 Repo có sẵn hai workflow GitHub Actions:
 
 - **Check timetable:** chạy test, kiểm tra TypeScript và build khi push hoặc mở pull request; lưu artifact `timetable-static`.
-- **Publish GitHub Pages:** triển khai thủ công sau khi bạn sẵn sàng.
+- **Publish GitHub Pages:** tự động kiểm tra, build và triển khai mỗi lần cập nhật `main`; cũng có thể chạy thủ công từ tab Actions. Nếu test hoặc build lỗi, bước deploy không chạy và bản web đang hoạt động được giữ lại.
 
 Để bật web trên GitHub Pages:
 
 1. Đưa mã nguồn này lên nhánh `main` của `Bao-Hann/Timetable`.
 2. Vào **Settings → Pages → Build and deployment → Source**, chọn **GitHub Actions**.
-3. Vào **Actions → Publish GitHub Pages → Run workflow**, chọn `main`.
+3. Push hoặc merge mã vào `main` để tự động triển khai. Khi muốn triển khai lại, vào **Actions → Publish GitHub Pages → Run workflow**, chọn `main`.
 4. Khi workflow thành công, mở URL trong bước deploy hoặc trang **Settings → Pages**.
 
 Không đưa `node_modules/` lên hosting. Font Inter và Lora được đóng gói cùng bản build, không phụ thuộc Google Fonts khi chạy.
