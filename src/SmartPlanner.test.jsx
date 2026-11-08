@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import React from 'react'
 import App, { THEMES, autoScheduleTasks, getMonthGrid, summarizeMonth } from './App.jsx'
 
@@ -88,5 +88,29 @@ describe('monthly calendar and day drill-down', () => {
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: /Auto arrange/ }))
     expect(screen.getAllByText(/Đã tự xếp|Không tìm được khoảng trống/).length).toBeGreaterThan(0)
+  })
+})
+
+describe('waiting list input regression', () => {
+  it('adds a floating task with a non-multiple-of-five duration and persists it', () => {
+    render(<App />)
+    const form = screen.getByRole('form', { name: 'Thêm công việc' })
+    fireEvent.change(within(form).getByPlaceholderText('Bạn muốn làm điều gì?'), { target: { value: 'Luyện nói tiếng Trung' } })
+    fireEvent.change(within(form).getByLabelText('Ước tính (phút)'), { target: { value: '17' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Thêm vào danh sách chờ' }))
+    expect(screen.getByText('Luyện nói tiếng Trung')).toBeInTheDocument()
+    expect(within(form).getByRole('status')).toHaveTextContent('Đã thêm')
+    const stored = JSON.parse(localStorage.getItem('nhip.smart-planner.v1'))
+    expect(stored.floatingTasks.some((item) => item.title === 'Luyện nói tiếng Trung' && item.estimatedDuration === 17)).toBe(true)
+  })
+
+  it('provides an inline error when duration is empty or invalid', () => {
+    render(<App />)
+    const form = screen.getByRole('form', { name: 'Thêm công việc' })
+    fireEvent.change(within(form).getByPlaceholderText('Bạn muốn làm điều gì?'), { target: { value: 'Đọc sách' } })
+    fireEvent.change(within(form).getByLabelText('Ước tính (phút)'), { target: { value: '' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Thêm vào danh sách chờ' }))
+    expect(within(form).getByRole('alert')).toHaveTextContent('Hãy nhập thời lượng')
+    expect(screen.queryByText('Đọc sách')).not.toBeInTheDocument()
   })
 })
