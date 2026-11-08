@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDownToLine, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronLeft, ChevronRight, CircleHelp, Flower2, Inbox, Leaf, Plus, RotateCcw, SlidersHorizontal, Sparkles, Sun, X } from 'lucide-react'
+import type { ChangeEvent } from 'react'
+import { ArrowDownToLine, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronLeft, ChevronRight, CircleHelp, Flower2, Inbox, Leaf, Plus, RotateCcw, Upload, SlidersHorizontal, Sparkles, Sun, X } from 'lucide-react'
 import MonthCalendar from './components/MonthCalendar'
 import TaskForm from './components/TaskForm'
 import Timeline from './components/Timeline'
-import { addDays, approveTask, categories, createDemoTasks, createTask, dateKey, getNextWeek, loadTasks, parseDateKey, saveTasks, sortTasks, startOfWeek } from './lib/schedule'
+import { addDays, approveTask, categories, createDemoTasks, createTask, dateKey, getNextWeek, loadTasks, parseBackup, parseDateKey, saveTasks, sortTasks, startOfWeek } from './lib/schedule'
 import type { Category, Task, TaskInput } from './lib/schedule'
 
 const monthNames = ['Một', 'Hai', 'Ba', 'Tư', 'Năm', 'Sáu', 'Bảy', 'Tám', 'Chín', 'Mười', 'Mười Một', 'Mười Hai']
@@ -12,6 +13,17 @@ const weekday = (date: Date) => new Intl.DateTimeFormat('vi-VN', { weekday: 'lon
 const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
 const monthStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1, 12)
 interface Notice { message: string; deletedTask?: Task }
+
+function readTextFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => typeof reader.result === 'string'
+      ? resolve(reader.result)
+      : reject(new Error('Không đọc được nội dung tệp.'))
+    reader.onerror = () => reject(new Error('Không đọc được tệp sao lưu.'))
+    reader.readAsText(file, 'UTF-8')
+  })
+}
 
 export default function App() {
   const [initial] = useState(() => loadTasks())
@@ -28,8 +40,10 @@ export default function App() {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [storageWarning, setStorageWarning] = useState(initial.warning)
   const [helpOpen, setHelpOpen] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
   const detailRef = useRef<HTMLElement>(null)
   const addRef = useRef<HTMLButtonElement>(null)
+  const importRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!notice) return
@@ -126,6 +140,32 @@ export default function App() {
     setNotice({ message: isDemo ? 'Đã tải bản sao lịch mẫu.' : 'Đã tải bản sao lịch của bạn.' })
   }
 
+  async function importBackup(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0]
+    event.currentTarget.value = ''
+    if (!file) return
+    try {
+      if (file.size > 10 * 1024 * 1024) {
+        throw new Error('Tệp quá lớn (tối đa 10 MB). Lịch hiện tại vẫn được giữ nguyên.')
+      }
+      const imported = parseBackup(await readTextFile(file))
+      if (!isDemo && tasks.length > 0 &&
+          !window.confirm('Nhập bản sao sẽ thay thế toàn bộ lịch hiện có trên trình duyệt này. Bạn đã tải bản sao của lịch hiện tại chưa?')) {
+        return
+      }
+      setIsDemo(false)
+      update(imported, false)
+      setCategory(null)
+      setPendingOnly(false)
+      setView('month')
+      selectDate(imported[0]?.date ?? today)
+      setImportError(null)
+      setNotice({ message: `Đã nhập ${imported.length} công việc từ bản sao.` })
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : 'Không thể đọc bản sao. Lịch hiện tại không thay đổi.')
+    }
+  }
+
   const selected = parseDateKey(selectedDate)!
   const weekStart = startOfWeek(selected)
   const weekDays = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index))
@@ -153,6 +193,7 @@ export default function App() {
       <header className="page-header"><div><p className="eyebrow"><span className="tiny-sun" />KHÔNG GIAN CÁ NHÂN</p><h1>Lịch trình của bạn<span className="heading-period">.</span></h1><p className="page-subtitle">Một chút sắp xếp, nhiều khoảng thở hơn.</p></div><div className="header-right"><span className="today-label"><Sun size={17} strokeWidth={1.3} />{capital(weekday(parseDateKey(today)!))}, {shortDate(parseDateKey(today)!)}</span><button ref={addRef} className="primary-button add-task-button" onClick={() => openForm()} aria-label="Thêm công việc"><Plus size={17} /><span>Thêm công việc</span></button></div></header>
       {isDemo && <div className="demo-banner"><span><Sparkles size={15} /><strong>Một chút cảm hứng.</strong><span>Bạn đang xem lịch mẫu.</span></span><button onClick={startPersonal}>Tạo lịch của bạn <ArrowRight size={15} /></button></div>}
       {storageWarning && <div className="warning-banner" role="alert"><span>{storageWarning} Các thay đổi hiện được giữ trong phiên này.</span><button onClick={download}><ArrowDownToLine size={16} />Tải bản sao</button></div>}
+      {importError && <div className="warning-banner" role="alert"><span>{importError}</span><button onClick={() => setImportError(null)}>Đóng</button></div>}
       {helpOpen && <div className="help-panel"><div><p className="eyebrow">LÊN KẾ HOẠCH THEO CÁCH CỦA BẠN</p><p>Chọn ngày để xem công việc theo giờ. Việc mới có viền nét đứt; bấm <Check size={14} /> <strong>Duyệt</strong> để xác nhận. Chỉnh sửa sẽ đưa việc về chờ duyệt. “Tuần tới” là thứ Hai đến Chủ nhật của tuần kế tiếp.</p><p>Lịch riêng được lưu trong trình duyệt đang dùng. Bạn có thể tải bản sao JSON từ nút ở cuối trang.</p></div><button className="icon-button" aria-label="Đóng hướng dẫn" onClick={() => setHelpOpen(false)}><X size={17} /></button></div>}
       <div className="overview-row"><p><span className="overview-number">{monthTasks.length.toString().padStart(2, '0')}</span> công việc trong tháng <span className="overview-separator">/</span><span className="pending-summary"><span />{monthTasks.filter(task => task.status === 'pending').length} chờ duyệt</span></p><div className="quick-links"><button onClick={() => { selectDate(dateKey(addDays(new Date(), 1)), true); setView('month') }}>Ngày mai<ArrowUpRight size={13} /></button><button onClick={goNextWeek}>Tuần tới<ArrowUpRight size={13} /></button></div></div>
       <div className="planner-layout">
@@ -168,7 +209,7 @@ export default function App() {
           {formOpen ? <TaskForm key={`${editingTask?.id ?? 'new'}-${selectedDate}`} date={selectedDate} editingTask={editingTask} onSave={save} onCancel={closeForm} /> : <><div className="detail-eyebrow"><span className="eyebrow">{view === 'week' ? 'NHÌN VỀ PHÍA TRƯỚC' : selectedDate === today ? 'HÔM NAY CỦA BẠN' : 'MỘT NGÀY CỦA BẠN'}</span><span className="detail-count">{detailTasks.length} việc</span></div><div className="detail-date"><span>{selected.getDate().toString().padStart(2, '0')}</span><div><h3>{capital(weekday(selected))}</h3><p>Tháng {selected.getMonth() + 1}, {selected.getFullYear()}</p></div><Flower2 size={31} strokeWidth={1} /></div>{view === 'week' && <p className="week-range">Cả tuần · {shortDate(weekStart)} — {shortDate(weekEnd)}</p>}<div className="detail-rule" /><Timeline tasks={detailTasks} selectedDate={selectedDate} isWeek={view === 'week'} onApprove={approve} onEdit={task => openForm(task.date, task)} onDelete={remove} onAdd={() => openForm()} hasFilters={hasFilters} onClearFilters={() => { setCategory(null); setPendingOnly(false) }} /></>}
         </aside>
       </div>
-      <footer className="page-footer"><span><span className="saved-dot" />{isDemo ? 'Lịch mẫu · để bạn khám phá' : storageWarning ? 'Lịch đang lưu tạm trong phiên này' : 'Lịch riêng · lưu trên trình duyệt này'}</span><span className="footer-signature">Less rush. More rhythm.</span><button onClick={download}><ArrowDownToLine size={14} />Tải bản sao JSON</button></footer>
+      <footer className="page-footer"><span><span className="saved-dot" />{isDemo ? 'Lịch mẫu · để bạn khám phá' : storageWarning ? 'Lịch đang lưu tạm trong phiên này' : 'Lịch riêng · lưu trên trình duyệt này'}</span><span className="footer-signature">Less rush. More rhythm.</span><div className="backup-actions"><input ref={importRef} type="file" accept=".json,application/json" className="sr-only" aria-label="Nhập bản sao từ tệp JSON" onChange={importBackup} /><button onClick={() => importRef.current?.click()}><Upload size={14} />Nhập bản sao JSON</button><button onClick={download}><ArrowDownToLine size={14} />Tải bản sao JSON</button></div></footer>
     </main>
     {notice && <div className="toast" role="status"><span className="toast-icon"><Check size={15} /></span><span>{notice.message}</span>{notice.deletedTask && <button onClick={undoDelete}><RotateCcw size={13} />Hoàn tác</button>}<button aria-label="Đóng thông báo" onClick={() => setNotice(null)}><X size={14} /></button></div>}
   </div>

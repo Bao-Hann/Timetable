@@ -135,6 +135,36 @@ describe('personal timetable flows', () => {
     expect(savedTasks()[0].date).toBe('2026-12-02')
   })
 
+
+  it('restores tasks from a JSON backup and asks before replacing existing work', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, tasks: [fixture('old', '2026-11-08', 'Việc cũ')] }))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+    render(<App />)
+
+    const fileContents = JSON.stringify({ version: 1, tasks: [
+      fixture('restored', '2026-12-02', 'Việc đã sao lưu'),
+    ] })
+    const uploadInput = screen.getByLabelText('Nhập bản sao từ tệp JSON')
+    await user.upload(uploadInput, new File([fileContents], 'nhip-backup.json', { type: 'application/json' }))
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(savedTasks()[0].id).toBe('old')
+
+    await user.upload(uploadInput, new File([fileContents], 'nhip-backup.json', { type: 'application/json' }))
+    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(savedTasks()[0].id).toBe('restored')
+    expect(screen.getByRole('article', { name: 'Việc đã sao lưu' })).toBeInTheDocument()
+  })
+
+  it('shows an error and leaves the calendar untouched for an invalid JSON backup', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, tasks: [fixture('old', '2026-11-08', 'Việc cũ')] }))
+    render(<App />)
+    await user.upload(screen.getByLabelText('Nhập bản sao từ tệp JSON'), new File(['{bad'], 'broken.json', { type: 'application/json' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Tệp JSON không đọc được')
+    expect(savedTasks()[0].id).toBe('old')
+  })
+
   it('preserves corrupted saved data while allowing clearly warned temporary work', async () => {
     const user = userEvent.setup()
     const original = '{ damaged personal calendar'

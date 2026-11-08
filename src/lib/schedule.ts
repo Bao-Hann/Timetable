@@ -162,6 +162,24 @@ function validTasks(value: unknown): value is Task[] {
   return new Set(value.map(task => task.id)).size === value.length;
 }
 
+/** Accept only complete, validated backups produced by Nhịp. */
+export function parseBackup(text: string): Task[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error('Tệp JSON không đọc được. Hãy chọn bản sao được tải từ Nhịp.');
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Bản sao không đúng định dạng của Nhịp.');
+  }
+  const backup = data as { version?: unknown; tasks?: unknown };
+  if (backup.version !== 1 || !validTasks(backup.tasks)) {
+    throw new Error('Bản sao không hợp lệ hoặc không được hỗ trợ. Lịch hiện tại vẫn được giữ nguyên.');
+  }
+  return sortTasks(backup.tasks);
+}
+
 export interface LoadTasksResult {
   tasks: Task[];
   warning?: string;
