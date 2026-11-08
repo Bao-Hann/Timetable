@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import React from 'react'
-import App, { THEMES, autoScheduleTasks, getMonthGrid, summarizeMonth, weeklyClassDates, createWeeklyClassSeries } from './App.jsx'
+import App, { THEMES, autoScheduleTasks, autoArrangeSkillWeek, createSkillSessions, startOfWeekKey, getMonthGrid, summarizeMonth, weeklyClassDates, createWeeklyClassSeries } from './App.jsx'
 
 const date = '2026-11-08'
 const fixed = (id, startTime, endTime, day = date) => ({ id, date: day, startTime, endTime, origin: 'fixed', status: 'approved' })
@@ -48,7 +48,7 @@ describe('smart planner interface', () => {
   it('switches between themes and displays the awaiting list', () => {
     render(<App />)
     expect(screen.getByText('Một dự định mới.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Auto arrange/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Auto arrange · Tự xếp lịch$/ })).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Đổi giao diện'), { target: { value: 'midnight' } })
     expect(screen.getByLabelText('Đổi giao diện')).toHaveValue('midnight')
   })
@@ -86,7 +86,7 @@ describe('monthly calendar and day drill-down', () => {
 
   it('shows clear Auto arrange feedback for unavailable tasks', () => {
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: /Auto arrange/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Auto arrange · Tự xếp lịch$/ }))
     expect(screen.getAllByText(/Đã tự xếp|Không tìm được khoảng trống/).length).toBeGreaterThan(0)
   })
 })
@@ -191,5 +191,93 @@ describe('eight-week recurring school lessons', () => {
     expect(confirm).toHaveBeenCalled()
     const stored = JSON.parse(localStorage.getItem('nhip.smart-planner.v1'))
     expect(stored.scheduledTasks.filter(x => x.category === 'school')).toHaveLength(0)
+  })
+})
+
+describe('weekly skill practice and safe task edits', () => {
+  it('creates only this week\'s requested number of skill sessions', () => {
+    let id = 0
+    const sessions = createSkillSessions({ title: 'Luyện đàn', note: 'Bài số 3', category: 'art', priority: 'normal',
+      timesPerWeek: '3', duration: '35', date: '2026-11-11' }, () => String(++id))
+    expect(sessions).toHaveLength(3)
+    expect(sessions.every(task => task.skillWeekStart === '2026-11-09')).toBe(true)
+    expect(sessions.map(task => task.skillIndex)).toEqual([1, 2, 3])
+    expect(startOfWeekKey('2026-11-15')).toBe('2026-11-09')
+    expect(startOfWeekKey('2026-11-16')).toBe('2026-11-16')
+    expect(() => createSkillSessions({ timesPerWeek: 8, duration: 35, date: '2026-11-11' })).toThrow()
+  })
+
+  it('keeps arranged skill sessions inside selected week without colliding', () => {
+    const items = createSkillSessions({ title: 'Luyện guitar', category: 'art', priority: 'high', timesPerWeek: 3,
+      duration: 45, date: '2026-11-11' }, (() => { let i = 0; return () => String(++i) })())
+    const { placed, remaining } = autoArrangeSkillWeek(items, [], '2026-11-11')
+    expect(placed).toHaveLength(3)
+    expect(remaining).toHaveLength(0)
+    expect(new Set(placed.map(task => task.date)).size).toBe(3)
+    expect(placed.every(task => task.date >= '2026-11-09' && task.date <= '2026-11-15' && task.status === 'pending')).toBe(true)
+    expect(autoArrangeSkillWeek(items, [], '2026-11-16').placed).toHaveLength(0)
+  })
+
+  it('preserves old saved data when opening the enhanced planner', () => {
+    const existing = fixed('old-event', '10:00', '12:00')
+    existing.title = 'Công việc đã nhập'
+    existing.category = 'academic'
+    localStorage.setItem('nhip.smart-planner.v1', JSON.stringify({
+      fixedTasks: [existing], floatingTasks: [], scheduledTasks: [existing], currentTheme: 'zen',
+    }))
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Chọn ngày xem lịch'), { target: { value: date } })
+    expect(screen.getByText('Công việc đã nhập')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Dự định tương lai.' })).toBeInTheDocument()
+    const saved = JSON.parse(localStorage.getItem('nhip.smart-planner.v1'))
+    expect(saved.scheduledTasks).toHaveLength(1)
+    expect(saved.futurePlans).toEqual([])
+  })
+
+  it('edits existing fixed tasks, updates notes, and rejects overlapping hours', () => {
+    const a = { ...fixed('edit-one', '10:00', '11:00'), title: 'Công việc cần sửa', category: 'academic', note: '' }
+    const b = { ...fixed('edit-two', '13:00', '14:00'), title: 'Công việc khác', category: 'research' }
+    localStorage.setItem('nhip.smart-planner.v1', JSON.stringify({
+      fixedTasks: [a, b], floatingTasks: [], scheduledTasks: [a, b], currentTheme: 'zen'
+    }))
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Chọn ngày xem lịch'), { target: { value: date } })
+    fireEvent.click(screen.getByRole('button', { name: 'Sửa Công việc cần sửa' }))
+    const dialog = screen.getByRole('dialog', { name: 'Sửa công việc' })
+    fireEvent.change(within(dialog).getByLabelText('Tên công việc'), { target: { value: 'Công việc mới' } })
+    fireEvent.change(within(dialog).getByLabelText('Ghi chú'), { target: { value: 'Đọc chương 4' } })
+    fireEvent.change(within(dialog).getByLabelText('Bắt đầu'), { target: { value: '13:10' } })
+    fireEvent.change(within(dialog).getByLabelText('Kết thúc'), { target: { value: '14:10' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Lưu thay đổi' }))
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('trùng')
+    expect(screen.getByText('Công việc cần sửa')).toBeInTheDocument()
+    fireEvent.change(within(dialog).getByLabelText('Bắt đầu'), { target: { value: '11:30' } })
+    fireEvent.change(within(dialog).getByLabelText('Kết thúc'), { target: { value: '12:30' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Lưu thay đổi' }))
+    expect(screen.getByText('Công việc mới')).toBeInTheDocument()
+    expect(screen.getByText('Đọc chương 4')).toBeInTheDocument()
+    const saved = JSON.parse(localStorage.getItem('nhip.smart-planner.v1'))
+    expect(saved.fixedTasks.find(task => task.id === 'edit-one').startTime).toBe('11:30')
+    expect(saved.scheduledTasks.find(task => task.id === 'edit-one').note).toBe('Đọc chương 4')
+    expect(saved.scheduledTasks.find(task => task.id === 'edit-two').startTime).toBe('13:00')
+  })
+
+  it('edits waiting tasks and stores future plans without scheduling them', () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Sửa Ôn 30 từ vựng tiếng Trung' }))
+    const editor = screen.getByRole('dialog', { name: 'Sửa công việc' })
+    fireEvent.change(within(editor).getByLabelText('Tên công việc'), { target: { value: 'Ôn từ vựng mới' } })
+    fireEvent.change(within(editor).getByLabelText('Thời lượng (phút)'), { target: { value: '25' } })
+    fireEvent.click(within(editor).getByRole('button', { name: 'Lưu thay đổi' }))
+    expect(screen.getByText('Ôn từ vựng mới')).toBeInTheDocument()
+    const board = screen.getByRole('region', { name: 'Dự định tương lai' })
+    fireEvent.change(within(board).getByLabelText('Tên dự định'), { target: { value: 'Học vẽ' } })
+    fireEvent.change(within(board).getByLabelText('Ghi chú dự định'), { target: { value: 'Dự định học mùa hè' } })
+    fireEvent.click(within(board).getByRole('button', { name: 'Lưu ý tưởng' }))
+    expect(within(board).getByText('Học vẽ')).toBeInTheDocument()
+    const saved = JSON.parse(localStorage.getItem('nhip.smart-planner.v1'))
+    expect(saved.floatingTasks.find(t => t.title === 'Ôn từ vựng mới').estimatedDuration).toBe(25)
+    expect(saved.futurePlans).toHaveLength(1)
+    expect(saved.scheduledTasks.some(t => t.title === 'Học vẽ')).toBe(false)
   })
 })
