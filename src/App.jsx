@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight, CalendarDays, Check, CheckCheck, ChevronLeft, ChevronRight,
-  Clock3, Coffee, Flower2, Leaf, Plus, RotateCcw, Sparkles, Trash2,
+  Clock3, Coffee, Download, Flower2, Leaf, NotebookPen, Pencil, Plus, RotateCcw, Sparkles, Trash2,
   WandSparkles, Wind, X,
 } from 'lucide-react';
 
@@ -63,6 +63,7 @@ const DAY_START = 8 * 60;
 const DAY_END = 22 * 60;
 const REST_BUFFER = 15;
 const SCHOOL_WEEKS = 8;
+const MAX_SKILL_SESSIONS = 7;
 const PRIORITY = { high: 0, normal: 1, low: 2 };
 const inputBase = 'w-full min-w-0 rounded-none border-0 border-b bg-transparent pb-2 pt-2 text-[13px] outline-none transition-colors duration-300 focus:border-[var(--accent)]';
 const displayDate = (d) => new Intl.DateTimeFormat('vi-VN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(d);
@@ -133,7 +134,36 @@ export function createWeeklyClassSeries(input, scheduledTasks, createId = makeId
   return dates.map((date, index) => ({
     id: createId(), repeatGroupId, repeatIndex: index + 1, repeatTotal: SCHOOL_WEEKS,
     date, startTime: input.startTime, endTime: input.endTime,
-    title: input.title, category: 'school', origin: 'fixed', status: 'approved',
+    title: input.title, note: input.note || '', category: 'school', origin: 'fixed', status: 'approved',
+  }));
+}
+
+/** Thứ Hai của tuần chứa ngày được chọn, không kéo dài sang tuần tiếp theo. */
+export function startOfWeekKey(dateKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey ?? '')) throw new Error('Ngày trong tuần không hợp lệ.');
+  const day = fromIso(dateKey);
+  if (isoDate(day) !== dateKey) throw new Error('Ngày trong tuần không tồn tại.');
+  day.setDate(day.getDate() - ((day.getDay() + 6) % 7));
+  return isoDate(day);
+}
+
+/** Số buổi luyện tập được ghi vào Waiting List của duy nhất một tuần. */
+export function createSkillSessions(input, createId = makeId) {
+  const times = Number(input.timesPerWeek);
+  const duration = Number(input.duration);
+  if (!Number.isInteger(times) || times < 1 || times > MAX_SKILL_SESSIONS) {
+    throw new Error('Số buổi luyện kỹ năng phải từ 1 đến 7 buổi mỗi tuần.');
+  }
+  if (!Number.isInteger(duration) || duration < 5 || duration > 600) {
+    throw new Error('Thời lượng mỗi buổi phải từ 5 đến 600 phút.');
+  }
+  const weekStart = startOfWeekKey(input.date);
+  const skillSeriesId = createId();
+  return Array.from({ length: times }, (_, index) => ({
+    id: createId(), title: input.title, note: input.note || '',
+    category: input.category === 'school' ? 'academic' : input.category,
+    estimatedDuration: duration, priority: input.priority,
+    skillWeekStart: weekStart, skillSeriesId, skillIndex: index + 1, skillTotal: times,
   }));
 }
 
@@ -155,7 +185,7 @@ const createExamples = () => {
     { id: 'example-float-3', title: 'Luyện đàn Piano', category: 'art', estimatedDuration: 45, priority: 'normal' },
     { id: 'example-float-4', title: 'Đọc tài liệu nghiên cứu', category: 'academic', estimatedDuration: 60, priority: 'normal' },
   ];
-  return { fixedTasks, floatingTasks, scheduledTasks: [...fixedTasks], currentTheme: 'zen' };
+  return { fixedTasks, floatingTasks, scheduledTasks: [...fixedTasks], futurePlans: [], currentTheme: 'zen' };
 };
 function readSaved() {
   try {
@@ -163,7 +193,7 @@ function readSaved() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed.fixedTasks) && Array.isArray(parsed.floatingTasks) && Array.isArray(parsed.scheduledTasks)) {
-        return { ...parsed, currentTheme: THEMES[parsed.currentTheme] ? parsed.currentTheme : 'zen' };
+        return { ...parsed, futurePlans: Array.isArray(parsed.futurePlans) ? parsed.futurePlans : [], currentTheme: THEMES[parsed.currentTheme] ? parsed.currentTheme : 'zen' };
       }
     }
   } catch { /* Không để lỗi trình duyệt chặn giao diện. */ }
@@ -183,7 +213,11 @@ export function autoScheduleTasks(floatingTasks, scheduledTasks, selectedDate, s
     .map((item) => ({ start: toMinutes(item.startTime), end: toMinutes(item.endTime) }))
     .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start);
 
-  const ordered = [...floatingTasks].sort((a, b) => (PRIORITY[a.priority] ?? 1) - (PRIORITY[b.priority] ?? 1));
+  const selectedWeek = startOfWeekKey(selectedDate);
+  const reservedSkillGroups = new Set(scheduledTasks.filter((item) => item.date === selectedDate && item.skillSeriesId).map((item) => item.skillSeriesId));
+  const ordered = floatingTasks
+    .filter((item) => !item.skillWeekStart || item.skillWeekStart === selectedWeek)
+    .sort((a, b) => (PRIORITY[a.priority] ?? 1) - (PRIORITY[b.priority] ?? 1));
   const placed = [];
   const placedIds = new Set();
 
@@ -204,6 +238,7 @@ export function autoScheduleTasks(floatingTasks, scheduledTasks, selectedDate, s
   }
 
   for (const task of ordered) {
+    if (task.skillSeriesId && reservedSkillGroups.has(task.skillSeriesId)) continue;
     const duration = Number(task.estimatedDuration);
     if (!Number.isInteger(duration) || duration <= 0 || duration > end - start) continue;
     let position = nextSlot(duration, buffer);
@@ -215,7 +250,37 @@ export function autoScheduleTasks(floatingTasks, scheduledTasks, selectedDate, s
     };
     placed.push(next);
     placedIds.add(task.id);
+    if (task.skillSeriesId) reservedSkillGroups.add(task.skillSeriesId);
     reserved.push({ start: position, end: position + duration });
+  }
+  return { placed, remaining: floatingTasks.filter((task) => !placedIds.has(task.id)) };
+}
+
+/** Tìm chỗ cho các buổi kỹ năng trong DUY NHẤT tuần đã chọn, ưu tiên trải đều ngày. */
+export function autoArrangeSkillWeek(floatingTasks, scheduledTasks, dayInWeek) {
+  const start = startOfWeekKey(dayInWeek);
+  const weekDays = Array.from({ length: 7 }, (_, index) => {
+    const day = fromIso(start);
+    day.setDate(day.getDate() + index);
+    return isoDate(day);
+  });
+  const eligible = floatingTasks
+    .filter((task) => task.skillSeriesId && task.skillWeekStart === start)
+    .sort((a, b) => (PRIORITY[a.priority] ?? 1) - (PRIORITY[b.priority] ?? 1) || a.skillIndex - b.skillIndex);
+  const placed = [];
+  const placedIds = new Set();
+  for (const task of eligible) {
+    const ideal = Math.round((task.skillIndex * 8 / (task.skillTotal + 1)) - 1);
+    const dayOrder = weekDays
+      .map((date, index) => ({ date, index }))
+      .sort((a, b) => Math.abs(a.index - ideal) - Math.abs(b.index - ideal) || a.index - b.index);
+    for (const candidate of dayOrder) {
+      const result = autoScheduleTasks([task], [...scheduledTasks, ...placed], candidate.date);
+      if (!result.placed.length) continue;
+      placed.push(...result.placed);
+      placedIds.add(task.id);
+      break;
+    }
   }
   return { placed, remaining: floatingTasks.filter((task) => !placedIds.has(task.id)) };
 }
@@ -302,7 +367,7 @@ function GroupBadge({ category, theme }) {
   </span>;
 }
 
-function TaskCard({ task, theme, onApprove, onRemove, onRequeue, onRemoveSeries }) {
+function TaskCard({ task, theme, onApprove, onRemove, onRequeue, onRemoveSeries, onEditNote, onEditTask }) {
   const pending = task.status === 'pending';
   const accent = theme[task.category] ?? theme.accent;
   return <div className="group grid grid-cols-[51px_12px_minmax(0,1fr)] gap-3 pb-4 sm:grid-cols-[70px_14px_minmax(0,1fr)] sm:gap-4">
@@ -315,15 +380,18 @@ function TaskCard({ task, theme, onApprove, onRemove, onRequeue, onRemoveSeries 
         <div className="flex items-center gap-1.5">
           {pending ? <button type="button" aria-label={`Duyệt ${task.title}`} title="Duyệt công việc" onClick={() => onApprove(task.id)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors hover:bg-[var(--soft)]" style={{ borderColor: theme.line, color: theme.accent }}><Check size={15} /></button>
             : <span className="inline-flex items-center gap-1 text-[10px]" style={{ color: theme.muted }}><CheckCheck size={13} /> Đã chốt</span>}
+          <button type="button" onClick={() => onEditTask(task, false)} title="Sửa công việc" aria-label={`Sửa ${task.title}`} className="inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><Pencil size={14} /></button>
+          <button type="button" onClick={() => onEditNote(task)} title="Xem hoặc sửa ghi chú" aria-label={`Ghi chú ${task.title}`} className="inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><NotebookPen size={14} /></button>
           {task.repeatGroupId && <button type="button" onClick={() => onRemoveSeries(task.repeatGroupId)} aria-label={`Xóa cả 8 buổi: ${task.title}`} title="Xóa toàn bộ chuỗi 8 buổi" className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-dashed transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted, borderColor: theme.line }}><Trash2 size={14} /></button>}
           {task.origin === 'floating' && <button type="button" onClick={() => onRequeue(task.id)} aria-label={`Trả lại danh sách chờ: ${task.title}`} title="Trả lại danh sách chờ" className="inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><RotateCcw size={14} /></button>}
           <button type="button" onClick={() => onRemove(task.id)} aria-label={`Xóa ${task.title}`} title="Xóa công việc" className="inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><Trash2 size={14} /></button>
         </div>
       </div>
       <h3 className="mt-3 text-[13px] font-medium leading-relaxed sm:text-[14px]" style={{ color: theme.text }}>{task.title}</h3>
+      {task.note && <p className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed" style={{ color: theme.muted }}>{task.note}</p>}
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px]" style={{ color: theme.muted }}>
         <span className="inline-flex items-center gap-1.5 tabular-nums"><Clock3 size={12} /> {task.startTime} — {task.endTime}</span>
-        <span>{task.repeatGroupId ? `Đi học · buổi ${task.repeatIndex}/${task.repeatTotal}` : pending ? 'Gợi ý · chờ duyệt' : task.origin === 'fixed' ? 'Lịch cố định' : 'Đã xếp tự động'}</span>
+        <span>{task.skillSeriesId ? `Luyện kỹ năng · buổi ${task.skillIndex}/${task.skillTotal}` : task.repeatGroupId ? `Đi học · buổi ${task.repeatIndex}/${task.repeatTotal}` : pending ? 'Gợi ý · chờ duyệt' : task.origin === 'fixed' ? 'Lịch cố định' : 'Đã xếp tự động'}</span>
       </div>
     </article>
   </div>;
@@ -343,12 +411,19 @@ export default function App() {
   const [floatingTasks, setFloatingTasks] = useState(initial.floatingTasks);
   const [scheduledTasks, setScheduledTasks] = useState(initial.scheduledTasks);
   const [currentTheme, setCurrentTheme] = useState(initial.currentTheme);
+  const [futurePlans, setFuturePlans] = useState(initial.futurePlans);
   const [selectedDate, setSelectedDate] = useState(() => isoDate(new Date()));
   const [visibleMonth, setVisibleMonth] = useState(() => { const now = new Date(); return isoDate(new Date(now.getFullYear(), now.getMonth(), 1, 12)); });
   const [arrangeFeedback, setArrangeFeedback] = useState('');
   const timelineRef = useRef(null);
   const [mode, setMode] = useState('floating');
-  const [draft, setDraft] = useState({ title: '', category: 'academic', duration: '45', priority: 'normal', date: isoDate(new Date()), startTime: '09:00', endTime: '10:00' });
+  const [planDraft, setPlanDraft] = useState({ title: '', note: '', targetDate: '' });
+  const [editingPlan, setEditingPlan] = useState(null);
+  const [editingNoteTask, setEditingNoteTask] = useState(null);
+  const [noteText, setNoteText] = useState('');
+  const [editingTask, setEditingTask] = useState(null);
+  const [editError, setEditError] = useState('');
+  const [draft, setDraft] = useState({ title: '', note: '', category: 'academic', duration: '45', timesPerWeek: '3', priority: 'normal', date: isoDate(new Date()), startTime: '09:00', endTime: '10:00' });
   const [message, setMessage] = useState('');
   const [noticeIsError, setNoticeIsError] = useState(false);
   const [storageError, setStorageError] = useState(false);
@@ -362,9 +437,9 @@ export default function App() {
   const approvedCount = allToday.filter((item) => item.status === 'approved').length;
 
   useEffect(() => {
-    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ fixedTasks, floatingTasks, scheduledTasks, currentTheme })); setStorageError(false); }
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ fixedTasks, floatingTasks, scheduledTasks, futurePlans, currentTheme })); setStorageError(false); }
     catch { setStorageError(true); }
-  }, [fixedTasks, floatingTasks, scheduledTasks, currentTheme]);
+  }, [fixedTasks, floatingTasks, scheduledTasks, futurePlans, currentTheme]);
 
   const say = (text, error = false) => { setMessage(text); setNoticeIsError(error); };
   const reportForm = (text, error = false) => {
@@ -388,18 +463,137 @@ export default function App() {
     selectDate(isoDate(new Date(next.getFullYear(), next.getMonth(), cappedDay, 12)));
   };
   const updateDraft = (key, value) => { setFormFeedback(null); setDraft((prev) => ({ ...prev, [key]: value })); };
+  function editNote(task) {
+    setEditingNoteTask({ id: task.id, title: task.title, floating: !task.date });
+    setNoteText(task.note || '');
+  }
+  function saveNote() {
+    if (!editingNoteTask) return;
+    const note = noteText.slice(0, 5000);
+    if (editingNoteTask.floating) {
+      setFloatingTasks((prev) => prev.map((task) => task.id === editingNoteTask.id ? { ...task, note } : task));
+    } else {
+      setScheduledTasks((prev) => prev.map((task) => task.id === editingNoteTask.id ? { ...task, note } : task));
+      setFixedTasks((prev) => prev.map((task) => task.id === editingNoteTask.id ? { ...task, note } : task));
+    }
+    setEditingNoteTask(null);
+    say('Đã lưu ghi chú công việc.');
+  }
+  function openEditTask(task, waiting) {
+    setEditingTask({
+      id: task.id, waiting, title: task.title || '', note: task.note || '',
+      category: task.category || 'academic', priority: task.priority || 'normal',
+      estimatedDuration: String(task.estimatedDuration || 45),
+      date: task.date || task.skillWeekStart || selectedDate,
+      startTime: task.startTime || '09:00', endTime: task.endTime || '10:00',
+    });
+    setEditError('');
+  }
+  function saveEditedTask(event) {
+    event.preventDefault();
+    if (!editingTask) return;
+    const original = editingTask.waiting
+      ? floatingTasks.find((task) => task.id === editingTask.id)
+      : scheduledTasks.find((task) => task.id === editingTask.id);
+    if (!original) { setEditError('Công việc không còn trong lịch. Hãy đóng rồi mở lại.'); return; }
+    const title = editingTask.title.trim();
+    if (!title) { setEditError('Hãy nhập tên công việc.'); return; }
+    const note = editingTask.note.slice(0, 5000);
+    const category = original.repeatGroupId ? 'school' : editingTask.category;
+    if (editingTask.waiting) {
+      const duration = Number(editingTask.estimatedDuration);
+      if (!Number.isInteger(duration) || duration < 5 || duration > 600) {
+        setEditError('Thời lượng phải từ 5 đến 600 phút.'); return;
+      }
+      let nextWeek = original.skillWeekStart;
+      if (original.skillWeekStart) {
+        try { nextWeek = startOfWeekKey(editingTask.date); }
+        catch { setEditError('Ngày chọn cho tuần luyện kỹ năng không hợp lệ.'); return; }
+      }
+      setFloatingTasks((prev) => prev.map((task) => task.id === original.id
+        ? { ...task, title, note, category, priority: editingTask.priority, estimatedDuration: duration, ...(nextWeek ? { skillWeekStart: nextWeek } : {}) }
+        : task));
+    } else {
+      const start = toMinutes(editingTask.startTime);
+      const end = toMinutes(editingTask.endTime);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(editingTask.date || '') || isoDate(fromIso(editingTask.date)) !== editingTask.date ||
+          !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+        setEditError('Ngày hoặc giờ không hợp lệ.'); return;
+      }
+      if (original.skillSeriesId && startOfWeekKey(editingTask.date) !== original.skillWeekStart) {
+        setEditError('Buổi luyện kỹ năng này thuộc tuần đã chọn. Hãy đổi ngày trong cùng tuần hoặc trả về danh sách chờ.'); return;
+      }
+      const conflict = scheduledTasks.some((task) => task.id !== original.id && task.date === editingTask.date &&
+        start < toMinutes(task.endTime) && end > toMinutes(task.startTime));
+      if (conflict) { setEditError('Khung giờ này trùng với công việc khác. Lịch cũ vẫn được giữ nguyên.'); return; }
+      const changed = { ...original, title, note, category, date: editingTask.date,
+        startTime: editingTask.startTime, endTime: editingTask.endTime };
+      setScheduledTasks((prev) => prev.map((task) => task.id === original.id ? changed : task));
+      if (original.origin === 'fixed') {
+        setFixedTasks((prev) => prev.map((task) => task.id === original.id ? changed : task));
+      }
+      selectDate(editingTask.date);
+    }
+    setEditingTask(null);
+    say('Đã lưu chỉnh sửa công việc mà không thay đổi các việc khác.');
+  }
+
+  function saveFuturePlan(event) {
+    event.preventDefault();
+    const title = planDraft.title.trim();
+    if (!title) return;
+    const details = { title, note: planDraft.note.slice(0, 5000), targetDate: planDraft.targetDate };
+    if (editingPlan) {
+      setFuturePlans((prev) => prev.map((plan) => plan.id === editingPlan ? { ...plan, ...details } : plan));
+    } else {
+      setFuturePlans((prev) => [...prev, { id: makeId(), ...details }]);
+    }
+    setPlanDraft({ title: '', note: '', targetDate: '' });
+    setEditingPlan(null);
+    say('Đã lưu dự định tương lai.');
+  }
+  function startEditPlan(plan) {
+    setEditingPlan(plan.id);
+    setPlanDraft({ title: plan.title, note: plan.note || '', targetDate: plan.targetDate || '' });
+  }
+  function downloadBackup() {
+    try {
+      const payload = { version: 2, exportedAt: new Date().toISOString(), fixedTasks, floatingTasks, scheduledTasks, futurePlans, currentTheme };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'nhip-sao-luu-' + isoDate(new Date()) + '.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      say('Đã tạo bản sao lịch và ghi chú. Hãy lưu tệp ở nơi an toàn.');
+    } catch {
+      say('Không thể tải bản sao trên trình duyệt này.', true);
+    }
+  }
 
   function addTask(event) {
     event.preventDefault();
     const title = draft.title.trim();
     if (!title) return reportForm('Hãy nhập tên công việc để thêm vào lịch.', true);
+    if (mode === 'skill') {
+      try {
+        const skills = createSkillSessions({ ...draft, title });
+        setFloatingTasks((prev) => [...prev, ...skills]);
+        reportForm(`Đã tạo ${skills.length} buổi luyện kỹ năng trong tuần bắt đầu ${skills[0].skillWeekStart.split('-').reverse().join('/')}. Bấm Auto arrange tuần để xếp lịch.`);
+        setDraft((prev) => ({ ...prev, title: '', note: '' }));
+      } catch (error) { reportForm(error instanceof Error ? error.message : 'Lịch kỹ năng không hợp lệ.', true); }
+      return;
+    }
     if (mode === 'floating') {
       // Không dùng ràng buộc bước 5 phút của trình duyệt: người dùng có thể nhập 17, 23... phút.
       const estimatedDuration = draft.duration.trim() === '' ? NaN : Number(draft.duration);
       if (!Number.isInteger(estimatedDuration) || estimatedDuration < 5 || estimatedDuration > 600) {
         return reportForm('Hãy nhập thời lượng từ 5 đến 600 phút (ví dụ: 30, 45 hoặc 60).', true);
       }
-      setFloatingTasks((prev) => [...prev, { id: makeId(), title, category: draft.category, estimatedDuration, priority: draft.priority }]);
+      setFloatingTasks((prev) => [...prev, { id: makeId(), title, note: draft.note || '', category: draft.category, estimatedDuration, priority: draft.priority }]);
       reportForm(`Đã thêm “${title}” vào Waiting List. Chọn Auto arrange khi muốn xếp lịch.`);
     } else {
       if (draft.category === 'school') {
@@ -409,7 +603,7 @@ export default function App() {
           setScheduledTasks((prev) => [...prev, ...series]);
           selectDate(draft.date);
           reportForm(`Đã thêm đủ 8 buổi “${title}” vào lịch, từ ${series[0].date.split('-').reverse().join('/')} đến ${series[7].date.split('-').reverse().join('/')}.`);
-          setDraft((prev) => ({ ...prev, title: '' }));
+          setDraft((prev) => ({ ...prev, title: '', note: '' }));
         } catch (error) {
           reportForm(error instanceof Error ? error.message : 'Không thể thêm lịch học.', true);
         }
@@ -423,13 +617,13 @@ export default function App() {
       if (scheduledTasks.some((task) => task.date === draft.date && start < toMinutes(task.endTime) && end > toMinutes(task.startTime))) {
         return reportForm('Khoảng giờ này đã có công việc. Hãy chọn giờ khác.', true);
       }
-      const item = { id: makeId(), date: draft.date, startTime: draft.startTime, endTime: draft.endTime, title, category: draft.category, origin: 'fixed', status: 'approved' };
+      const item = { id: makeId(), date: draft.date, startTime: draft.startTime, endTime: draft.endTime, title, note: draft.note || '', category: draft.category, origin: 'fixed', status: 'approved' };
       setFixedTasks((prev) => [...prev, item]);
       setScheduledTasks((prev) => [...prev, item]);
       selectDate(draft.date);
       reportForm(`Đã cố định “${title}” vào lịch ngày ${draft.date}.`);
     }
-    setDraft((prev) => ({ ...prev, title: '' }));
+    setDraft((prev) => ({ ...prev, title: '', note: '' }));
   }
 
   function handleAutoSchedule() {
@@ -452,6 +646,17 @@ export default function App() {
     if (typeof window.requestAnimationFrame === 'function') {
       window.requestAnimationFrame(() => timelineRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }));
     }
+  }
+
+  function arrangeSelectedWeek() {
+    const result = autoArrangeSkillWeek(floatingTasks, scheduledTasks, selectedDate);
+    if (!result.placed.length) {
+      return say('Tuần đang chọn không còn buổi kỹ năng phù hợp để xếp. Hãy kiểm tra tuần hoặc thời lượng.', true);
+    }
+    setScheduledTasks((prev) => [...prev, ...result.placed]);
+    setFloatingTasks(result.remaining);
+    selectDate(result.placed[0].date, true);
+    say(`Đã đề xuất ${result.placed.length} buổi luyện kỹ năng trong một tuần. Hãy duyệt từng buổi.`);
   }
 
   function approveTask(id) {
@@ -527,12 +732,22 @@ export default function App() {
           <section className="rounded-2xl border px-5 py-6 sm:px-7" style={{ borderColor: theme.line, backgroundColor: theme.panel }}>
             <div className="mb-6 flex items-start justify-between gap-3"><div><p className="text-[9px] uppercase tracking-[.2em]" style={{ color: theme.muted }}>Ghi một điều cần làm</p><h2 className="mt-2 font-serif text-[27px] tracking-[-.045em]">Một dự định mới.</h2></div><Plus size={18} strokeWidth={1.5} style={{ color: theme.accent }} /></div>
             <div className="mb-5 flex rounded-lg p-1 text-[11px]" style={{ backgroundColor: theme.subtle }}>
-              {[['floating', 'Linh hoạt'], ['fixed', 'Cố định giờ']].map(([key, label]) => <button type="button" key={key} onClick={() => { setMode(key); if (key === 'floating' && draft.category === 'school') setDraft((prev) => ({ ...prev, category: 'academic' })); setFormFeedback(null); }} className="flex-1 rounded-md px-2 py-2.5 transition-colors duration-300" style={{ backgroundColor: mode === key ? theme.page : 'transparent', color: mode === key ? theme.text : theme.muted }}>{label}</button>)}
+              {[['floating', 'Linh hoạt'], ['fixed', 'Cố định giờ'], ['skill', 'Luyện kỹ năng']].map(([key, label]) => <button type="button" key={key} onClick={() => { setMode(key); if (key !== 'fixed' && draft.category === 'school') setDraft((prev) => ({ ...prev, category: 'academic' })); setFormFeedback(null); }} className="flex-1 rounded-md px-2 py-2.5 transition-colors duration-300" style={{ backgroundColor: mode === key ? theme.page : 'transparent', color: mode === key ? theme.text : theme.muted }}>{label}</button>)}
             </div>
             <form onSubmit={addTask} noValidate aria-label="Thêm công việc" className="space-y-5">
               <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Tên công việc</span><input required maxLength={160} value={draft.title} onChange={(e) => updateDraft('title', e.target.value)} placeholder="Bạn muốn làm điều gì?" className={inputBase} style={{ color: theme.text, borderColor: theme.line }} /></label>
               <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Nhóm</span><select value={draft.category} onChange={(e) => { updateDraft('category', e.target.value); if (e.target.value === 'school') setMode('fixed'); }} className={inputBase} style={{ color: theme.text, backgroundColor: theme.panel, borderColor: theme.line }}>{GROUPS.map((group) => <option value={group.id} key={group.id}>{group.label}</option>)}</select></label>
-              {mode === 'floating' ? <div className="grid grid-cols-2 gap-4">
+              <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ghi chú (không bắt buộc)</span><textarea maxLength={5000} rows={2} value={draft.note} onChange={(e) => updateDraft('note', e.target.value)} placeholder="Thông tin cần nhớ, mục tiêu, đường dẫn tài liệu..." className={inputBase + ' resize-y'} style={{ color: theme.text, borderColor: theme.line }} /></label>
+              {mode === 'skill' ? <>
+                <div className="grid grid-cols-2 gap-4">
+                  <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Số buổi trong tuần</span><input type="number" min="1" max="7" step="1" value={draft.timesPerWeek} onChange={(e) => updateDraft('timesPerWeek', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line }} /></label>
+                  <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Phút mỗi buổi</span><input type="number" min="5" max="600" step="1" value={draft.duration} onChange={(e) => updateDraft('duration', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line }} /></label>
+                </div>
+                <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Chọn một ngày thuộc tuần muốn luyện tập</span><input type="date" value={draft.date} onChange={(e) => updateDraft('date', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line, colorScheme: currentTheme === 'midnight' ? 'dark' : 'light' }} /></label>
+                <div className="rounded-lg border border-dashed px-4 py-3 text-[11px] leading-relaxed" style={{ borderColor: theme.line, color: theme.muted }}>
+                  Chỉ tạo buổi luyện cho tuần đang chọn. Tuần sau có thể thay đổi số buổi hoặc lịch học tùy ý. Sử dụng “Auto arrange tuần” để tìm giờ trống trong 7 ngày.
+                </div>
+              </> : mode === 'floating' ? <div className="grid grid-cols-2 gap-4">
                 <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ước tính (phút)</span><input type="number" min={5} max={600} step={1} required value={draft.duration} onChange={(e) => updateDraft('duration', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line }} /></label>
                 <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ưu tiên</span><select value={draft.priority} onChange={(e) => updateDraft('priority', e.target.value)} className={inputBase} style={{ color: theme.text, backgroundColor: theme.panel, borderColor: theme.line }}><option value="high">Quan trọng</option><option value="normal">Bình thường</option><option value="low">Có thể để sau</option></select></label>
               </div> : <><label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ngày thực hiện</span><input type="date" required value={draft.date} onChange={(e) => updateDraft('date', e.target.value)} className={inputBase} style={{ color: theme.text, borderColor: theme.line, colorScheme: currentTheme === 'midnight' ? 'dark' : 'light' }} /></label>
@@ -543,7 +758,7 @@ export default function App() {
                   <p className="mt-1 tabular-nums" style={{ color: theme.school }}>{draft.date && /^\d{4}-\d{2}-\d{2}$/.test(draft.date) ? `${weeklyClassDates(draft.date)[0].split('-').reverse().join('/')} → ${weeklyClassDates(draft.date)[7].split('-').reverse().join('/')}` : 'Hãy chọn ngày bắt đầu hợp lệ.'}</p>
                 </div>}
               </>}
-              <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3.5 text-[12px] font-medium transition-opacity duration-300 hover:opacity-85" style={{ backgroundColor: theme.accent, color: currentTheme === 'midnight' || currentTheme === 'botanical' ? '#121212' : '#FFFFFF' }}><Plus size={16} /> {mode === 'floating' ? 'Thêm vào danh sách chờ' : draft.category === 'school' ? 'Thêm 8 buổi đi học' : 'Cố định vào lịch'} <ArrowRight size={14} /></button>
+              <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3.5 text-[12px] font-medium transition-opacity duration-300 hover:opacity-85" style={{ backgroundColor: theme.accent, color: currentTheme === 'midnight' || currentTheme === 'botanical' ? '#121212' : '#FFFFFF' }}><Plus size={16} /> {mode === 'skill' ? 'Thêm buổi luyện tuần này' : mode === 'floating' ? 'Thêm vào danh sách chờ' : draft.category === 'school' ? 'Thêm 8 buổi đi học' : 'Cố định vào lịch'} <ArrowRight size={14} /></button>
               {formFeedback && <p role={formFeedback.error ? 'alert' : 'status'} className="rounded-lg px-3 py-2.5 text-[11px] leading-relaxed" style={{ backgroundColor: rgba(formFeedback.error ? theme.leadership : theme.research, .1), color: formFeedback.error ? theme.leadership : theme.text }}>{formFeedback.text}</p>}
             </form>
           </section>
@@ -553,14 +768,48 @@ export default function App() {
             <div className="mt-5 max-h-[250px] space-y-1 overflow-y-auto pr-1">
               {floatingTasks.length ? floatingTasks.map((task) => <div key={task.id} className="flex items-center gap-3 border-b py-3 last:border-b-0" style={{ borderColor: theme.line }}>
                 <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: theme[task.category] }} />
-                <div className="min-w-0 flex-1"><p className="break-words text-[12px] leading-relaxed">{task.title}</p><p className="mt-1 text-[10px]" style={{ color: theme.muted }}>{task.estimatedDuration} phút · {task.priority === 'high' ? 'Ưu tiên cao' : task.priority === 'low' ? 'Có thể để sau' : 'Bình thường'}</p></div>
+                <div className="min-w-0 flex-1"><p className="break-words text-[12px] leading-relaxed">{task.title}</p><p className="mt-1 text-[10px]" style={{ color: theme.muted }}>{task.estimatedDuration} phút · {task.priority === 'high' ? 'Ưu tiên cao' : task.priority === 'low' ? 'Có thể để sau' : 'Bình thường'}</p>
+                  {task.skillWeekStart && <p className="mt-1 text-[10px]" style={{ color: theme.muted }}>Buổi {task.skillIndex}/{task.skillTotal} · tuần từ {task.skillWeekStart.split('-').reverse().join('/')}</p>}
+                  {task.note && <p className="mt-1 whitespace-pre-wrap break-words text-[10px]" style={{ color: theme.muted }}>{task.note}</p>}
+                </div>
+                <button type="button" onClick={() => openEditTask(task, true)} aria-label={`Sửa ${task.title}`} title="Sửa công việc" className="rounded-md p-2 transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><Pencil size={14}/></button>
+                <button type="button" onClick={() => editNote(task)} aria-label={`Ghi chú ${task.title}`} title="Xem hoặc sửa ghi chú" className="rounded-md p-2 transition-colors hover:bg-[var(--soft)]" style={{ color: theme.muted }}><NotebookPen size={14}/></button>
                 <button type="button" onClick={() => removeFloating(task.id)} className="rounded-md p-2 transition-colors hover:bg-[var(--soft)]" aria-label={`Xóa khỏi danh sách chờ: ${task.title}`} style={{ color: theme.muted }}><X size={14} /></button>
               </div>) : <p className="py-7 text-center font-serif text-[17px] italic" style={{ color: theme.muted }}>Mọi dự định đều đã có chỗ.</p>}
             </div>
             <button type="button" onClick={handleAutoSchedule} className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3.5 text-[12px] font-medium transition-all duration-300 hover:-translate-y-0.5" style={{ borderColor: theme.accent, color: theme.accent, backgroundColor: rgba(theme.accent, .08) }}><Sparkles size={17} /> Auto arrange · Tự xếp lịch</button>
+            <button type="button" onClick={arrangeSelectedWeek} className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3.5 text-[12px] font-medium transition-colors duration-300 hover:opacity-70" style={{ borderColor: theme.line, color: theme.text }}><CalendarDays size={16} /> Auto arrange tuần · Luyện kỹ năng</button>
             {arrangeFeedback && <p aria-live="polite" className="mt-3 rounded-lg px-3 py-2.5 text-[11px] leading-[1.8]" style={{ color: theme.text, backgroundColor: theme.subtle }}>{arrangeFeedback}</p>}
             <p className="mt-3 text-[10px] leading-[1.8]" style={{ color: theme.muted }}>Ưu tiên công việc quan trọng, tránh trùng lịch và chừa 15 phút nghỉ khi có thể. Gợi ý sẽ chờ bạn duyệt.</p>
           </section>
+          <section aria-label="Dự định tương lai" className="rounded-2xl border px-5 py-6 sm:px-7" style={{ borderColor: theme.line, backgroundColor: theme.panel }}>
+            <p className="text-[9px] uppercase tracking-[.2em]" style={{ color: theme.muted }}>Ý tưởng cho ngày mai</p>
+            <h2 className="mt-2 font-serif text-[25px] tracking-[-.04em]">Dự định tương lai.</h2>
+            <p className="mt-2 text-[11px] leading-relaxed" style={{ color: theme.muted }}>Lưu ý tưởng chưa cần xếp lịch, không chiếm giờ của bạn.</p>
+            <form onSubmit={saveFuturePlan} className="mt-5 space-y-4">
+              <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Tên dự định</span><input required maxLength={160} value={planDraft.title} onChange={(e) => setPlanDraft((p) => ({ ...p, title: e.target.value }))} placeholder="Ví dụ: Học nhiếp ảnh" className={inputBase} style={{ color: theme.text, borderColor: theme.line }} /></label>
+              <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ngày dự kiến (không bắt buộc)</span><input type="date" value={planDraft.targetDate} onChange={(e) => setPlanDraft((p) => ({ ...p, targetDate: e.target.value }))} className={inputBase} style={{ color: theme.text, borderColor: theme.line }} /></label>
+              <label className="block"><span className="text-[10px]" style={{ color: theme.muted }}>Ghi chú dự định</span><textarea rows={3} maxLength={5000} value={planDraft.note} onChange={(e) => setPlanDraft((p) => ({ ...p, note: e.target.value }))} placeholder="Mục tiêu, ý tưởng, tài liệu..." className={inputBase + ' resize-y'} style={{ color: theme.text, borderColor: theme.line }} /></label>
+              <div className="flex gap-2">
+                <button type="submit" className="flex-1 rounded-lg px-4 py-3 text-[11px] transition-opacity hover:opacity-75" style={{ backgroundColor: theme.accent, color: theme.page }}>{editingPlan ? 'Lưu dự định' : 'Lưu ý tưởng'}</button>
+                {editingPlan && <button type="button" onClick={() => { setEditingPlan(null); setPlanDraft({ title: '', note: '', targetDate: '' }); }} className="rounded-lg border px-3 text-[11px]" style={{ borderColor: theme.line }}>Hủy sửa</button>}
+              </div>
+            </form>
+            <div className="mt-5 space-y-3">
+              {futurePlans.map((plan) => <article key={plan.id} className="border-t pt-3" style={{ borderColor: theme.line }}>
+                <div className="flex justify-between gap-2"><h3 className="break-words text-[12px] font-medium">{plan.title}</h3>
+                  <div className="flex gap-1">
+                    <button type="button" onClick={() => startEditPlan(plan)} aria-label={`Sửa dự định ${plan.title}`} className="p-1" style={{ color: theme.muted }}><Pencil size={14}/></button>
+                    <button type="button" onClick={() => { if (window.confirm('Xóa dự định này?')) setFuturePlans((prev) => prev.filter((p) => p.id !== plan.id)); }} aria-label={`Xóa dự định ${plan.title}`} className="p-1" style={{ color: theme.muted }}><Trash2 size={14}/></button>
+                  </div>
+                </div>
+                {plan.targetDate && <p className="mt-1 text-[10px]" style={{ color: theme.muted }}>Dự kiến: {plan.targetDate.split('-').reverse().join('/')}</p>}
+                {plan.note && <p className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed" style={{ color: theme.muted }}>{plan.note}</p>}
+              </article>)}
+              {!futurePlans.length && <p className="py-3 text-[11px] italic" style={{ color: theme.muted }}>Chưa có dự định nào. Hãy giữ một ý tưởng ở đây.</p>}
+            </div>
+          </section>
+          <button type="button" onClick={downloadBackup} className="inline-flex items-center gap-2 px-1 text-[10px] underline underline-offset-4 transition-opacity hover:opacity-60" style={{ color: theme.muted }}><Download size={13} /> Tải bản sao lịch và ghi chú (JSON)</button>
           <button type="button" onClick={clearAll} className="inline-flex items-center gap-2 px-1 text-[10px] underline underline-offset-4 transition-opacity hover:opacity-60" style={{ color: theme.muted }}><Trash2 size={12} /> Làm trống toàn bộ lịch</button>
         </aside>
 
@@ -573,11 +822,44 @@ export default function App() {
           {storageError && <p role="alert" className="mt-4 text-[11px]" style={{ color: theme.leadership }}>Trình duyệt chưa lưu được dữ liệu. Thay đổi có thể mất khi tải lại trang.</p>}
           <div className="relative mt-8">
             <div className="pointer-events-none absolute bottom-8 left-[70px] top-6 w-px sm:left-[94px]" style={{ backgroundColor: theme.line }} aria-hidden="true" />
-            {timeline.length ? timeline.map((row) => row.type === 'task' ? <TaskCard key={row.key} task={row.task} theme={theme} onApprove={approveTask} onRemove={removeScheduled} onRequeue={requeue} onRemoveSeries={removeSeries} /> : <ZenSpace key={row.key} row={row} theme={theme} />) : <div className="py-24 text-center"><Wind size={26} className="mx-auto" style={{ color: theme.art }} /><h3 className="mt-5 font-serif text-[25px] italic">Một trang ngày còn trắng.</h3><p className="mt-3 text-[12px]" style={{ color: theme.muted }}>Thêm một công việc hoặc chọn Auto arrange để bắt đầu.</p></div>}
+            {timeline.length ? timeline.map((row) => row.type === 'task' ? <TaskCard key={row.key} task={row.task} theme={theme} onApprove={approveTask} onRemove={removeScheduled} onRequeue={requeue} onRemoveSeries={removeSeries} onEditNote={editNote} onEditTask={openEditTask} /> : <ZenSpace key={row.key} row={row} theme={theme} />) : <div className="py-24 text-center"><Wind size={26} className="mx-auto" style={{ color: theme.art }} /><h3 className="mt-5 font-serif text-[25px] italic">Một trang ngày còn trắng.</h3><p className="mt-3 text-[12px]" style={{ color: theme.muted }}>Thêm một công việc hoặc chọn Auto arrange để bắt đầu.</p></div>}
           </div>
           <div className="mt-8 flex items-center gap-3 border-t pt-6 text-[11px]" style={{ borderColor: theme.line, color: theme.muted }}><Coffee size={15} /> Đủ đầy, nhưng không cần vội vàng.</div>
         </main>
       </div>
+      {editingTask && <div role="presentation" className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4">
+        <section role="dialog" aria-modal="true" aria-label="Sửa công việc" className="w-full max-w-lg rounded-xl border p-6 shadow-2xl" style={{ backgroundColor: theme.panel, color: theme.text, borderColor: theme.line }}>
+          <div className="flex items-start justify-between"><h2 className="font-serif text-[25px]">Sửa công việc</h2><button type="button" onClick={() => setEditingTask(null)} aria-label="Đóng chỉnh sửa"><X size={18}/></button></div>
+          <p className="mt-2 text-[11px]" style={{ color: theme.muted }}>{editingTask.waiting ? 'Sửa một việc trong Waiting List.' : 'Chỉ sửa buổi đang chọn. Lịch học và các buổi khác giữ nguyên.'}</p>
+          <form onSubmit={saveEditedTask} className="mt-5 space-y-4">
+            <label className="block"><span className="text-[10px]">Tên công việc</span><input required maxLength={160} value={editingTask.title} onChange={(e) => setEditingTask((p) => ({ ...p, title: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text }} /></label>
+            <label className="block"><span className="text-[10px]">Nhóm</span><select value={editingTask.category} disabled={!editingTask.waiting && scheduledTasks.some((task) => task.id === editingTask.id && task.repeatGroupId)} onChange={(e) => setEditingTask((p) => ({ ...p, category: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text, backgroundColor: theme.panel }}>{GROUPS.filter((g) => g.id !== 'school' || !editingTask.waiting).map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}</select></label>
+            <label className="block"><span className="text-[10px]">Ghi chú</span><textarea rows={3} maxLength={5000} value={editingTask.note} onChange={(e) => setEditingTask((p) => ({ ...p, note: e.target.value }))} className={inputBase + ' resize-y'} style={{ borderColor: theme.line, color: theme.text }} /></label>
+            {editingTask.waiting ? <>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block"><span className="text-[10px]">Thời lượng (phút)</span><input type="number" min={5} max={600} value={editingTask.estimatedDuration} onChange={(e) => setEditingTask((p) => ({ ...p, estimatedDuration: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text }} /></label>
+                <label className="block"><span className="text-[10px]">Ưu tiên</span><select value={editingTask.priority} onChange={(e) => setEditingTask((p) => ({ ...p, priority: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text, backgroundColor: theme.panel }}><option value="high">Quan trọng</option><option value="normal">Bình thường</option><option value="low">Có thể để sau</option></select></label>
+              </div>
+              {floatingTasks.some((t) => t.id === editingTask.id && t.skillWeekStart) && <label className="block"><span className="text-[10px]">Một ngày thuộc tuần luyện kỹ năng</span><input type="date" value={editingTask.date} onChange={(e) => setEditingTask((p) => ({ ...p, date: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text }} /></label>}
+            </> : <>
+              <label className="block"><span className="text-[10px]">Ngày thực hiện</span><input type="date" value={editingTask.date} onChange={(e) => setEditingTask((p) => ({ ...p, date: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text }} /></label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block"><span className="text-[10px]">Bắt đầu</span><input type="time" value={editingTask.startTime} onChange={(e) => setEditingTask((p) => ({ ...p, startTime: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text }} /></label>
+                <label className="block"><span className="text-[10px]">Kết thúc</span><input type="time" value={editingTask.endTime} onChange={(e) => setEditingTask((p) => ({ ...p, endTime: e.target.value }))} className={inputBase} style={{ borderColor: theme.line, color: theme.text }} /></label>
+              </div>
+            </>}
+            {editError && <p role="alert" className="text-[11px]" style={{ color: theme.leadership }}>{editError}</p>}
+            <div className="flex justify-end gap-2 pt-3"><button type="button" onClick={() => setEditingTask(null)} className="rounded-lg border px-4 py-2.5 text-[11px]" style={{ borderColor: theme.line }}>Hủy</button><button type="submit" className="rounded-lg px-4 py-2.5 text-[11px]" style={{ backgroundColor: theme.accent, color: theme.page }}>Lưu thay đổi</button></div>
+          </form>
+        </section>
+      </div>}
+      {editingNoteTask && <div role="presentation" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <section role="dialog" aria-modal="true" aria-label="Ghi chú công việc" className="w-full max-w-lg rounded-xl border p-6 shadow-2xl" style={{ backgroundColor: theme.panel, color: theme.text, borderColor: theme.line }}>
+          <div className="flex justify-between gap-3"><h2 className="font-serif text-[24px]">Ghi chú · {editingNoteTask.title}</h2><button type="button" aria-label="Đóng ghi chú" onClick={() => setEditingNoteTask(null)}><X size={18}/></button></div>
+          <label className="mt-5 block"><span className="text-[11px]" style={{ color: theme.muted }}>Nội dung ghi chú</span><textarea rows={6} maxLength={5000} value={noteText} onChange={(e) => setNoteText(e.target.value)} className={inputBase + ' resize-y'} style={{ color: theme.text, borderColor: theme.line }} /></label>
+          <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setEditingNoteTask(null)} className="rounded-lg border px-4 py-2 text-[11px]" style={{ borderColor: theme.line }}>Hủy</button><button type="button" onClick={saveNote} className="rounded-lg px-4 py-2 text-[11px]" style={{ backgroundColor: theme.accent, color: theme.page }}>Lưu ghi chú</button></div>
+        </section>
+      </div>}
       <footer className="mt-16 flex flex-wrap items-center justify-between gap-3 border-t pt-6 text-[10px]" style={{ borderColor: theme.line, color: theme.muted }}><span className="inline-flex items-center gap-2"><Flower2 size={14} /> Nhịp — sống chậm giữa những điều quan trọng.</span><span>Gợi ý xếp lịch dựa trên quy tắc · Dữ liệu lưu trên thiết bị này</span></footer>
     </div>
   </div>;
