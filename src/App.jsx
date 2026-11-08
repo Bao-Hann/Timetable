@@ -295,6 +295,52 @@ export function autoArrangeSkillWeek(floatingTasks, scheduledTasks, dayInWeek) {
   return { placed, remaining: floatingTasks.filter((task) => !placedIds.has(task.id)) };
 }
 
+/**
+ * Khi thêm sự kiện cố định, chỉ xét các công việc đã tự xếp trên các ngày bị ảnh hưởng.
+ * Giữ các giờ cũ còn hợp lệ; công việc xung đột sẽ chuyển sang giờ mới hoặc trở về
+ * Waiting List nếu ngày/tuần không còn chỗ. Không đụng tới sự kiện cố định khác.
+ */
+export function reflowForFixedTasks(existingScheduled, existingWaiting, incomingFixed) {
+  const affectedDates = new Set(incomingFixed.map((task) => task.date));
+  const affectedAuto = existingScheduled.filter((task) => task.origin === 'floating' && affectedDates.has(task.date));
+  const remainingScheduled = existingScheduled.filter((task) => !affectedAuto.includes(task));
+  const nextScheduled = [...remainingScheduled, ...incomingFixed];
+  const nextWaiting = [...existingWaiting];
+  let moved = 0;
+  let requeued = 0;
+  const intersects = (left, right) =>
+    left.date === right.date &&
+    toMinutes(left.startTime) < toMinutes(right.endTime) &&
+    toMinutes(left.endTime) > toMinutes(right.startTime);
+  const withinQuietHours = (task) => AUTO_BLOCKED_PERIODS.some((period) =>
+    toMinutes(task.startTime) < period.end && toMinutes(task.endTime) > period.start);
+  const sorted = [...affectedAuto].sort((a, b) =>
+    a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+  for (const task of sorted) {
+    const keepOriginal = !withinQuietHours(task) && !nextScheduled.some((busy) => intersects(task, busy));
+    if (keepOriginal) {
+      nextScheduled.push(task);
+      continue;
+    }
+    const duration = Number(task.estimatedDuration) || toMinutes(task.endTime) - toMinutes(task.startTime);
+    const toReschedule = { ...task, estimatedDuration: duration };
+    let replacement = autoScheduleTasks([toReschedule], nextScheduled, task.date).placed[0];
+    if (!replacement && task.skillSeriesId) {
+      // Buổi kỹ năng có thể chuyển sang ngày khác nhưng vẫn trong đúng tuần ban đầu.
+      replacement = autoArrangeSkillWeek([toReschedule], nextScheduled, task.skillWeekStart || task.date).placed[0];
+    }
+    if (replacement) {
+      nextScheduled.push({ ...replacement, status: task.status, note: task.note, id: task.id });
+      moved++;
+    } else {
+      const { date, startTime, endTime, origin, status, ...waiting } = task;
+      if (!nextWaiting.some((item) => item.id === task.id)) nextWaiting.push({ ...waiting, estimatedDuration: duration });
+      requeued++;
+    }
+  }
+  return { scheduledTasks: nextScheduled, floatingTasks: nextWaiting, moved, requeued };
+}
+
 function buildTimeline(tasks) {
   const rows = [];
   const ordered = [...tasks].sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
@@ -608,11 +654,14 @@ export default function App() {
     } else {
       if (draft.category === 'school') {
         try {
-          const series = createWeeklyClassSeries({ ...draft, title }, scheduledTasks);
+          // Chỉ lịch cố định mới chặn một chuỗi lớp mới; lịch xếp tự động phải nhường chỗ.
+          const series = createWeeklyClassSeries({ ...draft, title }, scheduledTasks.filter((task) => task.origin === 'fixed'));
+          const result = reflowForFixedTasks(scheduledTasks, floatingTasks, series);
           setFixedTasks((prev) => [...prev, ...series]);
-          setScheduledTasks((prev) => [...prev, ...series]);
+          setScheduledTasks(result.scheduledTasks);
+          setFloatingTasks(result.floatingTasks);
           selectDate(draft.date);
-          reportForm(`Đã thêm đủ 8 buổi “${title}” vào lịch, từ ${series[0].date.split('-').reverse().join('/')} đến ${series[7].date.split('-').reverse().join('/')}.`);
+          reportForm(`Đã thêm đủ 8 buổi “${title}” vào lịch. ${result.moved ? `Tự điều chỉnh ${result.moved} việc.` : ''} ${result.requeued ? `${result.requeued} việc chưa có giờ phù hợp đã quay về Waiting List.` : ''}`);
           setDraft((prev) => ({ ...prev, title: '', note: '' }));
         } catch (error) {
           reportForm(error instanceof Error ? error.message : 'Không thể thêm lịch học.', true);
@@ -624,14 +673,16 @@ export default function App() {
       if (!draft.date || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
         return reportForm('Hãy kiểm tra ngày, giờ bắt đầu và giờ kết thúc.', true);
       }
-      if (scheduledTasks.some((task) => task.date === draft.date && start < toMinutes(task.endTime) && end > toMinutes(task.startTime))) {
+      if (scheduledTasks.some((task) => task.origin === 'fixed' && task.date === draft.date && start < toMinutes(task.endTime) && end > toMinutes(task.startTime))) {
         return reportForm('Khoảng giờ này đã có công việc. Hãy chọn giờ khác.', true);
       }
       const item = { id: makeId(), date: draft.date, startTime: draft.startTime, endTime: draft.endTime, title, note: draft.note || '', category: draft.category, origin: 'fixed', status: 'approved' };
+      const result = reflowForFixedTasks(scheduledTasks, floatingTasks, [item]);
       setFixedTasks((prev) => [...prev, item]);
-      setScheduledTasks((prev) => [...prev, item]);
+      setScheduledTasks(result.scheduledTasks);
+      setFloatingTasks(result.floatingTasks);
       selectDate(draft.date);
-      reportForm(`Đã cố định “${title}” vào lịch ngày ${draft.date}.`);
+      reportForm(`Đã cố định “${title}” vào lịch. ${result.moved ? `Auto arrange đã dời ${result.moved} công việc sang giờ khác.` : ''} ${result.requeued ? `${result.requeued} việc không còn chỗ, đã trở về Waiting List.` : ''}`);
     }
     setDraft((prev) => ({ ...prev, title: '', note: '' }));
   }
