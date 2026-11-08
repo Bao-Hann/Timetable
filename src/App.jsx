@@ -62,6 +62,11 @@ const STORAGE_KEY = 'nhip.smart-planner.v1';
 const DAY_START = 8 * 60;
 const DAY_END = 22 * 60;
 const REST_BUFFER = 15;
+/** Thời gian dành cho sinh hoạt: Auto arrange tuyệt đối không xếp việc vào những khoảng này. */
+export const AUTO_BLOCKED_PERIODS = Object.freeze([
+  Object.freeze({ start: 12 * 60, end: 14 * 60 }),
+  Object.freeze({ start: 17 * 60, end: 19 * 60 }),
+]);
 const SCHOOL_WEEKS = 8;
 const MAX_SKILL_SESSIONS = 7;
 const PRIORITY = { high: 0, normal: 1, low: 2 };
@@ -208,10 +213,15 @@ function readSaved() {
  * - Việc chưa vừa vẫn nằm trong danh sách chờ.
  */
 export function autoScheduleTasks(floatingTasks, scheduledTasks, selectedDate, start = DAY_START, end = DAY_END, buffer = REST_BUFFER) {
-  const reserved = scheduledTasks
-    .filter((item) => item.date === selectedDate)
-    .map((item) => ({ start: toMinutes(item.startTime), end: toMinutes(item.endTime) }))
-    .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start);
+  // Các khung giờ sinh hoạt là chỗ bận cố định cho thuật toán, không phải công việc lưu vào lịch.
+  // Vì vậy lịch đã tạo trước đây không bị di chuyển hoặc xóa.
+  const reserved = [
+    ...AUTO_BLOCKED_PERIODS.map(({ start, end }) => ({ start, end })),
+    ...scheduledTasks
+      .filter((item) => item.date === selectedDate)
+      .map((item) => ({ start: toMinutes(item.startTime), end: toMinutes(item.endTime) }))
+      .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start),
+  ];
 
   const selectedWeek = startOfWeekKey(selectedDate);
   const reservedSkillGroups = new Set(scheduledTasks.filter((item) => item.date === selectedDate && item.skillSeriesId).map((item) => item.skillSeriesId));
@@ -780,7 +790,7 @@ export default function App() {
             <button type="button" onClick={handleAutoSchedule} className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3.5 text-[12px] font-medium transition-all duration-300 hover:-translate-y-0.5" style={{ borderColor: theme.accent, color: theme.accent, backgroundColor: rgba(theme.accent, .08) }}><Sparkles size={17} /> Auto arrange · Tự xếp lịch</button>
             <button type="button" onClick={arrangeSelectedWeek} className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3.5 text-[12px] font-medium transition-colors duration-300 hover:opacity-70" style={{ borderColor: theme.line, color: theme.text }}><CalendarDays size={16} /> Auto arrange tuần · Luyện kỹ năng</button>
             {arrangeFeedback && <p aria-live="polite" className="mt-3 rounded-lg px-3 py-2.5 text-[11px] leading-[1.8]" style={{ color: theme.text, backgroundColor: theme.subtle }}>{arrangeFeedback}</p>}
-            <p className="mt-3 text-[10px] leading-[1.8]" style={{ color: theme.muted }}>Ưu tiên công việc quan trọng, tránh trùng lịch và chừa 15 phút nghỉ khi có thể. Gợi ý sẽ chờ bạn duyệt.</p>
+            <p className="mt-3 text-[10px] leading-[1.8]" style={{ color: theme.muted }}>Ưu tiên công việc quan trọng, tránh trùng lịch, tự né 12:00–14:00 và 17:00–19:00 mỗi ngày, đồng thời chừa 15 phút nghỉ khi có thể. Gợi ý sẽ chờ bạn duyệt.</p>
           </section>
           <section aria-label="Dự định tương lai" className="rounded-2xl border px-5 py-6 sm:px-7" style={{ borderColor: theme.line, backgroundColor: theme.panel }}>
             <p className="text-[9px] uppercase tracking-[.2em]" style={{ color: theme.muted }}>Ý tưởng cho ngày mai</p>
