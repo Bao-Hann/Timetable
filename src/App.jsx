@@ -107,7 +107,7 @@ export function summarizeMonth(tasks, month) {
 const fromIso = (key) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d, 12); };
 /** Tạo ngày học cách nhau đúng 7 ngày, tính cả buổi đầu tiên. */
 export function weeklyClassDates(date, weeks = SCHOOL_WEEKS) {
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date ?? '')) throw new Error('Ngày bắt đầu không hợp lệ.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) throw new Error('Ngày bắt đầu không hợp lệ.');
   const first = fromIso(date);
   if (isoDate(first) !== date) throw new Error('Ngày bắt đầu không tồn tại.');
   return Array.from({ length: weeks }, (_, week) => {
@@ -540,7 +540,7 @@ export default function App() {
                 {draft.category === 'school' && <div className="rounded-lg border border-dashed px-4 py-3 text-[11px] leading-[1.9]" style={{ borderColor: theme.school, color: theme.text, backgroundColor: rgba(theme.school, .07) }}>
                   <p className="font-medium">Lịch học cố định · 8 tuần liên tiếp</p>
                   <p style={{ color: theme.muted }}>Chọn ngày học đầu tiên và khung giờ. Nhịp sẽ tạo đủ 8 buổi cùng thứ, cùng giờ; tự kiểm tra trùng lịch ở cả 8 tuần.</p>
-                  <p className="mt-1 tabular-nums" style={{ color: theme.school }}>{draft.date && /^\\d{4}-\\d{2}-\\d{2}$/.test(draft.date) ? `${weeklyClassDates(draft.date)[0].split('-').reverse().join('/')} → ${weeklyClassDates(draft.date)[7].split('-').reverse().join('/')}` : 'Hãy chọn ngày bắt đầu hợp lệ.'}</p>
+                  <p className="mt-1 tabular-nums" style={{ color: theme.school }}>{draft.date && /^\d{4}-\d{2}-\d{2}$/.test(draft.date) ? `${weeklyClassDates(draft.date)[0].split('-').reverse().join('/')} → ${weeklyClassDates(draft.date)[7].split('-').reverse().join('/')}` : 'Hãy chọn ngày bắt đầu hợp lệ.'}</p>
                 </div>}
               </>}
               <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3.5 text-[12px] font-medium transition-opacity duration-300 hover:opacity-85" style={{ backgroundColor: theme.accent, color: currentTheme === 'midnight' || currentTheme === 'botanical' ? '#121212' : '#FFFFFF' }}><Plus size={16} /> {mode === 'floating' ? 'Thêm vào danh sách chờ' : draft.category === 'school' ? 'Thêm 8 buổi đi học' : 'Cố định vào lịch'} <ArrowRight size={14} /></button>
