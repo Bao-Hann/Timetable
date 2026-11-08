@@ -9,7 +9,7 @@ import {
  * NHỊP — Lịch trình cá nhân · Editorial / Zen
  * Toàn bộ giao diện, trạng thái, lưu trữ và bộ xếp lịch đều nằm trong App.jsx.
  * Cần React, lucide-react và Tailwind CSS. Không cần API hay máy chủ.
- * "AI Magic" là thuật toán xếp lịch dựa trên quy tắc, không gọi mô hình AI.
+ * "Auto arrange" là thuật toán xếp lịch dựa trên quy tắc, không gọi mô hình AI.
  */
 
 export const THEMES = {
@@ -357,7 +357,7 @@ export default function App() {
       const estimatedDuration = Number(draft.duration);
       if (!Number.isInteger(estimatedDuration) || estimatedDuration < 5 || estimatedDuration > 600) return say('Thời lượng phải từ 5 đến 600 phút.', true);
       setFloatingTasks((prev) => [...prev, { id: makeId(), title, category: draft.category, estimatedDuration, priority: draft.priority }]);
-      say('Đã thêm vào danh sách chờ. Bấm AI Magic để xếp lịch.');
+      say('Đã thêm vào danh sách chờ. Bấm Auto arrange để xếp lịch.');
     } else {
       const start = toMinutes(draft.startTime);
       const end = toMinutes(draft.endTime);
@@ -433,7 +433,7 @@ export default function App() {
           <select id="theme" aria-label="Đổi giao diện" value={currentTheme} onChange={(e) => setCurrentTheme(e.target.value)} className="max-w-[210px] cursor-pointer rounded-lg border px-3 py-2.5 text-[11px] outline-none transition-colors duration-300" style={{ color: theme.text, backgroundColor: theme.panel, borderColor: theme.line }}>
             {Object.entries(THEMES).map(([key, option]) => <option key={key} value={key}>{option.name}</option>)}
           </select>
-          <button type="button" onClick={() => { const now = isoDate(new Date()); setSelectedDate(now); updateDraft('date', now); }} className="rounded-lg border px-3 py-2.5 text-[11px] transition-colors duration-300 hover:opacity-70" style={{ borderColor: theme.line }}>Hôm nay</button>
+          <button type="button" onClick={() => selectDate(isoDate(new Date()))} className="rounded-lg border px-3 py-2.5 text-[11px] transition-colors duration-300 hover:opacity-70" style={{ borderColor: theme.line }}>Hôm nay</button>
         </div>
       </header>
 
@@ -453,6 +453,8 @@ export default function App() {
           { label: 'Khung giờ xếp lịch', value: '08–22' },
         ].map((info) => <div key={info.label} className="px-2 py-2 sm:px-5"><div className="font-serif text-[33px] leading-none tracking-[-.06em] sm:text-[39px]" style={{ color: theme.accent }}>{info.value}</div><p className="mt-3 text-[10px]" style={{ color: theme.muted }}>{info.label}</p></div>)}
       </div>
+
+      <MonthOverview month={displayedMonth} selectedDate={selectedDate} onSelectDate={(key) => selectDate(key, true)} onMoveMonth={moveMonth} scheduledTasks={scheduledTasks} theme={theme} />
 
       <div className="grid grid-cols-1 items-start gap-9 lg:grid-cols-[minmax(315px,385px)_minmax(0,1fr)] lg:gap-14 xl:gap-20">
         <aside className="min-w-0 space-y-7 lg:sticky lg:top-7">
@@ -483,22 +485,23 @@ export default function App() {
                 <button type="button" onClick={() => removeFloating(task.id)} className="rounded-md p-2 transition-colors hover:bg-[var(--soft)]" aria-label={`Xóa khỏi danh sách chờ: ${task.title}`} style={{ color: theme.muted }}><X size={14} /></button>
               </div>) : <p className="py-7 text-center font-serif text-[17px] italic" style={{ color: theme.muted }}>Mọi dự định đều đã có chỗ.</p>}
             </div>
-            <button type="button" onClick={handleAutoSchedule} className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3.5 text-[12px] font-medium transition-all duration-300 hover:-translate-y-0.5" style={{ borderColor: theme.accent, color: theme.accent, backgroundColor: rgba(theme.accent, .08) }}><Sparkles size={17} /> AI Magic · Tự động xếp lịch</button>
+            <button type="button" onClick={handleAutoSchedule} className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3.5 text-[12px] font-medium transition-all duration-300 hover:-translate-y-0.5" style={{ borderColor: theme.accent, color: theme.accent, backgroundColor: rgba(theme.accent, .08) }}><Sparkles size={17} /> Auto arrange · Tự xếp lịch</button>
+            {arrangeFeedback && <p aria-live="polite" className="mt-3 rounded-lg px-3 py-2.5 text-[11px] leading-[1.8]" style={{ color: theme.text, backgroundColor: theme.subtle }}>{arrangeFeedback}</p>}
             <p className="mt-3 text-[10px] leading-[1.8]" style={{ color: theme.muted }}>Ưu tiên công việc quan trọng, tránh trùng lịch và chừa 15 phút nghỉ khi có thể. Gợi ý sẽ chờ bạn duyệt.</p>
           </section>
           <button type="button" onClick={clearAll} className="inline-flex items-center gap-2 px-1 text-[10px] underline underline-offset-4 transition-opacity hover:opacity-60" style={{ color: theme.muted }}><Trash2 size={12} /> Làm trống toàn bộ lịch</button>
         </aside>
 
-        <main className="min-w-0" aria-labelledby="timeline-heading">
+        <main ref={timelineRef} className="min-w-0 scroll-mt-6" aria-labelledby="timeline-heading">
           <div className="flex flex-wrap items-start justify-between gap-4 border-b pb-5" style={{ borderColor: theme.line }}>
             <div><p className="text-[9px] uppercase tracking-[.2em]" style={{ color: theme.muted }}>Lịch trình / Daily flow</p><h2 id="timeline-heading" className="mt-3 font-serif text-[clamp(27px,3vw,43px)] capitalize tracking-[-.05em]">{displayDate(day)}</h2><p className="mt-3 text-[11px]" style={{ color: theme.muted }}>Có {approvedCount} việc đã chốt · {pendingCount} việc đang chờ duyệt</p></div>
-            <div className="flex items-center gap-2"><button type="button" aria-label="Ngày trước" onClick={() => advanceDate(-1)} className="flex h-9 w-9 items-center justify-center rounded-lg border transition-colors hover:bg-[var(--soft)]" style={{ borderColor: theme.line }}><ChevronLeft size={16} /></button><input type="date" aria-label="Chọn ngày xem lịch" value={selectedDate} onChange={(e) => e.target.value && setSelectedDate(e.target.value)} className="min-w-0 max-w-[139px] rounded-lg border px-2 py-2 text-[11px]" style={{ backgroundColor: theme.panel, color: theme.text, borderColor: theme.line, colorScheme: currentTheme === 'midnight' ? 'dark' : 'light' }} /><button type="button" aria-label="Ngày tiếp theo" onClick={() => advanceDate(1)} className="flex h-9 w-9 items-center justify-center rounded-lg border transition-colors hover:bg-[var(--soft)]" style={{ borderColor: theme.line }}><ChevronRight size={16} /></button></div>
+            <div className="flex items-center gap-2"><button type="button" aria-label="Ngày trước" onClick={() => advanceDate(-1)} className="flex h-9 w-9 items-center justify-center rounded-lg border transition-colors hover:bg-[var(--soft)]" style={{ borderColor: theme.line }}><ChevronLeft size={16} /></button><input type="date" aria-label="Chọn ngày xem lịch" value={selectedDate} onChange={(e) => e.target.value && selectDate(e.target.value)} className="min-w-0 max-w-[139px] rounded-lg border px-2 py-2 text-[11px]" style={{ backgroundColor: theme.panel, color: theme.text, borderColor: theme.line, colorScheme: currentTheme === 'midnight' ? 'dark' : 'light' }} /><button type="button" aria-label="Ngày tiếp theo" onClick={() => advanceDate(1)} className="flex h-9 w-9 items-center justify-center rounded-lg border transition-colors hover:bg-[var(--soft)]" style={{ borderColor: theme.line }}><ChevronRight size={16} /></button></div>
           </div>
           {message && <div role={noticeIsError ? 'alert' : 'status'} className="my-5 flex items-start justify-between gap-4 rounded-lg border px-4 py-3 text-[11px] leading-relaxed" style={{ borderColor: noticeIsError ? theme.leadership : theme.line, backgroundColor: theme.subtle }}><div className="flex items-start gap-2"><WandSparkles size={16} className="mt-0.5 shrink-0" style={{ color: theme.accent }} />{message}</div><button onClick={() => setMessage('')} aria-label="Đóng thông báo"><X size={15} /></button></div>}
           {storageError && <p role="alert" className="mt-4 text-[11px]" style={{ color: theme.leadership }}>Trình duyệt chưa lưu được dữ liệu. Thay đổi có thể mất khi tải lại trang.</p>}
           <div className="relative mt-8">
             <div className="pointer-events-none absolute bottom-8 left-[70px] top-6 w-px sm:left-[94px]" style={{ backgroundColor: theme.line }} aria-hidden="true" />
-            {timeline.length ? timeline.map((row) => row.type === 'task' ? <TaskCard key={row.key} task={row.task} theme={theme} onApprove={approveTask} onRemove={removeScheduled} onRequeue={requeue} /> : <ZenSpace key={row.key} row={row} theme={theme} />) : <div className="py-24 text-center"><Wind size={26} className="mx-auto" style={{ color: theme.art }} /><h3 className="mt-5 font-serif text-[25px] italic">Một trang ngày còn trắng.</h3><p className="mt-3 text-[12px]" style={{ color: theme.muted }}>Thêm một công việc hoặc chọn AI Magic để bắt đầu.</p></div>}
+            {timeline.length ? timeline.map((row) => row.type === 'task' ? <TaskCard key={row.key} task={row.task} theme={theme} onApprove={approveTask} onRemove={removeScheduled} onRequeue={requeue} /> : <ZenSpace key={row.key} row={row} theme={theme} />) : <div className="py-24 text-center"><Wind size={26} className="mx-auto" style={{ color: theme.art }} /><h3 className="mt-5 font-serif text-[25px] italic">Một trang ngày còn trắng.</h3><p className="mt-3 text-[12px]" style={{ color: theme.muted }}>Thêm một công việc hoặc chọn Auto arrange để bắt đầu.</p></div>}
           </div>
           <div className="mt-8 flex items-center gap-3 border-t pt-6 text-[11px]" style={{ borderColor: theme.line, color: theme.muted }}><Coffee size={15} /> Đủ đầy, nhưng không cần vội vàng.</div>
         </main>
