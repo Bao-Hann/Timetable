@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import App from './App'
+import App from './App.tsx'
 import { STORAGE_KEY } from './lib/schedule'
 import type { Task } from './lib/schedule'
 
