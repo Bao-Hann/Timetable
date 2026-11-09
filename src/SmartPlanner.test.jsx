@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import React from 'react'
-import App, { THEMES, AUTO_BLOCKED_PERIODS, reflowForFixedTasks, autoScheduleTasks, autoArrangeSkillWeek, createSkillSessions, startOfWeekKey, getMonthGrid, summarizeMonth, weeklyClassDates, createWeeklyClassSeries } from './App.jsx'
+import App, { THEMES, AUTO_BLOCKED_PERIODS, buildTimeline, reflowForFixedTasks, autoScheduleTasks, autoArrangeSkillWeek, createSkillSessions, startOfWeekKey, getMonthGrid, summarizeMonth, weeklyClassDates, createWeeklyClassSeries } from './App.jsx'
 
 const date = '2026-11-08'
 const fixed = (id, startTime, endTime, day = date) => ({ id, date: day, startTime, endTime, origin: 'fixed', status: 'approved' })
@@ -376,3 +376,69 @@ describe('daily protected hours and automatic adjustments', () => {
     expect(saved.fixedTasks.some(x => x.title === 'Lịch cố định mới')).toBe(true)
   })
 })
+
+describe('human-centric scheduling safety', () => {
+  const intersects = (task, start, end) => task.startTime < end && task.endTime > start;
+  it('reserves new lunch and dinner blocks, never schedules after 23:00', () => {
+    expect(AUTO_BLOCKED_PERIODS).toEqual([{ start: 720, end: 810 }, { start: 1110, end: 1170 }]);
+    const items = Array.from({ length: 25 }, (_, i) => floating('human-' + i, 30));
+    const { placed } = autoScheduleTasks(items, [], date);
+    for (const task of placed) {
+      expect(intersects(task, '12:00', '13:30')).toBe(false);
+      expect(intersects(task, '18:30', '19:30')).toBe(false);
+      expect(task.endTime <= '23:00').toBe(true);
+    }
+  });
+
+  it('always leaves 15m after short and 30m after long tasks', () => {
+    const tasks = [floating('a', 90), floating('b', 45), floating('c', 60)];
+    const { placed } = autoScheduleTasks(tasks, [], date);
+    expect(placed).toHaveLength(3);
+    const minutes = (time) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
+    for (let i = 1; i < placed.length; i++) {
+      const predecessor = placed[i - 1];
+      const rest = Number(predecessor.estimatedDuration) >= 90 ? 30 : 15;
+      expect(minutes(placed[i].startTime) - minutes(predecessor.endTime)).toBeGreaterThanOrEqual(rest);
+    }
+  });
+
+  it('honors required buffers both before and after existing fixed appointments', () => {
+    const reserved = [fixed('fixed', '09:00', '10:30')];
+    const { placed } = autoScheduleTasks([floating('short', 30)], reserved, date);
+    expect(placed).toHaveLength(1);
+    expect(placed[0].endTime <= '08:45' || placed[0].startTime >= '11:00').toBe(true);
+  });
+
+  it('caps morning and afternoon workload at 210 minutes, even with fixed work', () => {
+    const fixedTasks = [
+      fixed('am', '08:00', '11:00'),
+      fixed('pm', '13:30', '16:30'),
+      fixed('evening', '19:30', '22:30'),
+    ];
+    const { placed, remaining } = autoScheduleTasks([floating('task', 60)], fixedTasks, date);
+    expect(placed).toHaveLength(0);
+    expect(remaining).toHaveLength(1);
+    const withEnough = autoScheduleTasks([floating('small', 30)], [fixed('am', '08:00', '10:30')], date);
+    expect(withEnough.placed).toHaveLength(1);
+  });
+
+  it('shows Zen breaks at 15–30min and sacred breaks automatically', () => {
+    const rows = buildTimeline([fixed('event', '10:00', '11:45')]);
+    expect(rows.some((row) => row.type === 'zen' && row.kind === 'nap' && row.start === 720 && row.end === 810)).toBe(true);
+    expect(rows.some((row) => row.type === 'zen' && row.kind === 'dinner' && row.start === 1110 && row.end === 1170)).toBe(true);
+    const shortRows = buildTimeline([fixed('a', '08:00', '08:30'), fixed('b', '08:45', '09:00')]);
+    expect(shortRows.some((row) => row.type === 'zen' && row.start === 510 && row.end === 525)).toBe(true);
+  });
+
+  it('keeps remaining work in Waiting List after reaching limits', () => {
+    const fixedTasks = [
+      fixed('a', '08:00', '12:00'),
+      fixed('b', '13:30', '18:30'),
+      fixed('c', '19:30', '23:00'),
+    ];
+    const original = floating('recovery', 30);
+    const result = autoScheduleTasks([original], fixedTasks, date);
+    expect(result.placed).toHaveLength(0);
+    expect(result.remaining).toEqual([original]);
+  });
+});
