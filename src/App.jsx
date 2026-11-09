@@ -60,13 +60,23 @@ const GROUPS = [
 ];
 const STORAGE_KEY = 'nhip.smart-planner.v1';
 const DAY_START = 8 * 60;
-const DAY_END = 22 * 60;
+const DAY_END = 23 * 60;
 const REST_BUFFER = 15;
-/** Thời gian dành cho sinh hoạt: Auto arrange tuyệt đối không xếp việc vào những khoảng này. */
+const LUNCH_START = 12 * 60;
+const LUNCH_END = 13.5 * 60;
+const DINNER_START = 18.5 * 60;
+const DINNER_END = 19.5 * 60;
+const ENERGY_CAP = 3.5 * 60;
 export const AUTO_BLOCKED_PERIODS = Object.freeze([
-  Object.freeze({ start: 12 * 60, end: 14 * 60 }),
-  Object.freeze({ start: 17 * 60, end: 19 * 60 }),
+  Object.freeze({ start: LUNCH_START, end: LUNCH_END }),
+  Object.freeze({ start: DINNER_START, end: DINNER_END }),
 ]);
+const HUMAN_SESSIONS = Object.freeze([
+  { start: DAY_START, end: LUNCH_START, cap: ENERGY_CAP },
+  { start: LUNCH_END, end: DINNER_START, cap: ENERGY_CAP },
+  { start: DINNER_END, end: DAY_END, cap: Infinity },
+]);
+const restAfter = (duration) => duration >= 90 ? 30 : REST_BUFFER;
 const SCHOOL_WEEKS = 8;
 const MAX_SKILL_SESSIONS = 7;
 const PRIORITY = { high: 0, normal: 1, low: 2 };
@@ -213,55 +223,69 @@ function readSaved() {
  * - Việc chưa vừa vẫn nằm trong danh sách chờ.
  */
 export function autoScheduleTasks(floatingTasks, scheduledTasks, selectedDate, start = DAY_START, end = DAY_END, buffer = REST_BUFFER) {
-  // Các khung giờ sinh hoạt là chỗ bận cố định cho thuật toán, không phải công việc lưu vào lịch.
-  // Vì vậy lịch đã tạo trước đây không bị di chuyển hoặc xóa.
-  const reserved = [
-    ...AUTO_BLOCKED_PERIODS.map(({ start, end }) => ({ start, end })),
-    ...scheduledTasks
-      .filter((item) => item.date === selectedDate)
-      .map((item) => ({ start: toMinutes(item.startTime), end: toMinutes(item.endTime) }))
-      .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start),
-  ];
+  const booked = scheduledTasks
+    .filter((task) => task.date === selectedDate)
+    .map((task) => ({ ...task, _start: toMinutes(task.startTime), _end: toMinutes(task.endTime) }))
+    .filter((task) => Number.isFinite(task._start) && Number.isFinite(task._end) && task._end > task._start);
 
-  const selectedWeek = startOfWeekKey(selectedDate);
-  const reservedSkillGroups = new Set(scheduledTasks.filter((item) => item.date === selectedDate && item.skillSeriesId).map((item) => item.skillSeriesId));
-  const ordered = floatingTasks
-    .filter((item) => !item.skillWeekStart || item.skillWeekStart === selectedWeek)
-    .sort((a, b) => (PRIORITY[a.priority] ?? 1) - (PRIORITY[b.priority] ?? 1));
-  const placed = [];
-  const placedIds = new Set();
+  const sessions = HUMAN_SESSIONS
+    .map((session) => ({ ...session, start: Math.max(session.start, start), end: Math.min(session.end, end) }))
+    .filter((session) => session.start < session.end);
 
-  function nextSlot(duration, rest) {
-    const blocks = [...reserved].sort((a, b) => a.start - b.start || a.end - b.end);
-    let cursor = start;
-    let hasPrevious = false;
-    for (const block of blocks) {
-      if (block.end <= start || block.start >= end) continue;
-      const nextStart = Math.min(end, block.start);
-      const candidate = cursor + (hasPrevious ? rest : 0);
-      if (candidate + duration + rest <= nextStart) return candidate;
-      cursor = Math.max(cursor, Math.min(end, block.end));
-      hasPrevious = true;
+  // Tính số phút đang bận theo hợp các khoảng thời gian, không đếm trùng.
+  function occupiedMinutes(session) {
+    const blocks = booked
+      .map((task) => [Math.max(task._start, session.start), Math.min(task._end, session.end)])
+      .filter(([from, to]) => to > from)
+      .sort((a, b) => a[0] - b[0]);
+    let total = 0, lastEnd = session.start;
+    for (const [from, to] of blocks) {
+      total += Math.max(0, to - Math.max(from, lastEnd));
+      lastEnd = Math.max(lastEnd, to);
     }
-    const lastCandidate = cursor + (hasPrevious ? rest : 0);
-    return lastCandidate + duration <= end ? lastCandidate : null;
+    return total;
   }
 
+  const reserveAfter = (duration) => Math.max(buffer, restAfter(duration));
+  function findSlot(session, duration) {
+    const rest = reserveAfter(duration);
+    // Duyệt theo phút, ưu tiên vị trí sớm nhất. Luôn chừa đủ đệm sau mỗi task.
+    for (let candidate = session.start; candidate + duration + rest <= session.end; candidate++) {
+      const candidateEnd = candidate + duration;
+      const fits = booked.every((block) =>
+        candidate >= block._end + reserveAfter(block._end - block._start) ||
+        candidateEnd + rest <= block._start
+      );
+      if (fits) return candidate;
+    }
+    return null;
+  }
+
+  const currentWeek = startOfWeekKey(selectedDate);
+  const skillGroupsToday = new Set(booked.filter((task) => task.skillSeriesId).map((task) => task.skillSeriesId));
+  const ordered = floatingTasks
+    .filter((task) => !task.skillWeekStart || task.skillWeekStart === currentWeek)
+    .sort((a, b) => (PRIORITY[a.priority] ?? 1) - (PRIORITY[b.priority] ?? 1));
+
+  const placed = [], placedIds = new Set();
   for (const task of ordered) {
-    if (task.skillSeriesId && reservedSkillGroups.has(task.skillSeriesId)) continue;
+    if (task.skillSeriesId && skillGroupsToday.has(task.skillSeriesId)) continue;
     const duration = Number(task.estimatedDuration);
-    if (!Number.isInteger(duration) || duration <= 0 || duration > end - start) continue;
-    let position = nextSlot(duration, buffer);
-    if (position === null) position = nextSlot(duration, 0);
-    if (position === null) continue;
-    const next = {
-      ...task, date: selectedDate, startTime: toTime(position),
-      endTime: toTime(position + duration), origin: 'floating', status: 'pending',
-    };
-    placed.push(next);
-    placedIds.add(task.id);
-    if (task.skillSeriesId) reservedSkillGroups.add(task.skillSeriesId);
-    reserved.push({ start: position, end: position + duration });
+    if (!Number.isInteger(duration) || duration <= 0) continue;
+    for (const session of sessions) {
+      if (occupiedMinutes(session) + duration > session.cap) continue;
+      const position = findSlot(session, duration);
+      if (position === null) continue;
+      const next = {
+        ...task, date: selectedDate, startTime: toTime(position),
+        endTime: toTime(position + duration), origin: 'floating', status: 'pending',
+      };
+      placed.push(next);
+      placedIds.add(task.id);
+      booked.push({ ...next, _start: position, _end: position + duration });
+      if (task.skillSeriesId) skillGroupsToday.add(task.skillSeriesId);
+      break;
+    }
   }
   return { placed, remaining: floatingTasks.filter((task) => !placedIds.has(task.id)) };
 }
@@ -341,19 +365,33 @@ export function reflowForFixedTasks(existingScheduled, existingWaiting, incoming
   return { scheduledTasks: nextScheduled, floatingTasks: nextWaiting, moved, requeued };
 }
 
-function buildTimeline(tasks) {
+export function buildTimeline(tasks) {
   const rows = [];
   const ordered = [...tasks].sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
+  function addGap(from, to) {
+    if (to - from < REST_BUFFER) return;
+    const breaks = [from, to, ...AUTO_BLOCKED_PERIODS.flatMap(({ start, end }) => [start, end])]
+      .filter((minute) => minute >= from && minute <= to)
+      .sort((a, b) => a - b);
+    const points = [...new Set(breaks)];
+    for (let i = 0; i < points.length - 1; i++) {
+      const start = points[i], end = points[i + 1];
+      if (end - start < REST_BUFFER) continue;
+      const middle = (start + end) / 2;
+      const kind = middle >= LUNCH_START && middle < LUNCH_END ? 'nap'
+        : middle >= DINNER_START && middle < DINNER_END ? 'dinner' : 'buffer';
+      rows.push({ type: 'zen', kind, start, end, key: `zen-${kind}-${start}-${end}` });
+    }
+  }
   let cursor = DAY_START;
   for (const task of ordered) {
-    const start = toMinutes(task.startTime);
-    const end = toMinutes(task.endTime);
-    const gapEnd = Math.min(start, DAY_END);
-    if (gapEnd - cursor > 60) rows.push({ type: 'zen', start: cursor, end: gapEnd, key: `zen-${cursor}` });
+    const start = toMinutes(task.startTime), end = toMinutes(task.endTime);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    if (start > cursor) addGap(cursor, start);
     rows.push({ type: 'task', task, key: task.id });
     cursor = Math.max(cursor, end);
   }
-  if (DAY_END - cursor > 60) rows.push({ type: 'zen', start: cursor, end: DAY_END, key: `zen-${cursor}` });
+  if (cursor < DAY_END) addGap(cursor, DAY_END);
   return rows;
 }
 
@@ -454,10 +492,13 @@ function TaskCard({ task, theme, onApprove, onRemove, onRequeue, onRemoveSeries,
 }
 
 function ZenSpace({ row, theme }) {
-  return <div className="relative grid min-h-[130px] grid-cols-[51px_12px_minmax(0,1fr)] items-center gap-3 py-5 sm:min-h-[150px] sm:grid-cols-[70px_14px_minmax(0,1fr)] sm:gap-4">
+  const isNap = row.kind === 'nap', isDinner = row.kind === 'dinner';
+  const Icon = isNap || isDinner ? Coffee : Wind;
+  const heading = isNap ? 'Giấc ngủ trưa dịu dàng.' : isDinner ? 'Ăn tối & phục hồi năng lượng.' : 'Một khoảng thở cho riêng mình.';
+  return <div className="relative grid min-h-[75px] grid-cols-[51px_12px_minmax(0,1fr)] items-center gap-3 py-4 sm:grid-cols-[70px_14px_minmax(0,1fr)] sm:gap-4">
     <span className="text-right text-[10px] tabular-nums" style={{ color: theme.muted }}>{toTime(row.start)}</span>
-    <div className="relative z-10 flex justify-center"><div className="-ml-0.5 flex h-8 w-8 items-center justify-center rounded-full" style={{ backgroundColor: theme.page, color: theme.art }}><Wind size={17} strokeWidth={1.3} /></div></div>
-    <div className="pl-4 sm:pl-9"><p className="text-[9px] uppercase tracking-[.24em]" style={{ color: theme.muted }}>Một khoảng không</p><p className="mt-2 font-serif text-[15px] italic sm:text-[18px]" style={{ color: theme.text }}>Tĩnh tâm một chút, nhé.</p><p className="mt-2 text-[10px]" style={{ color: theme.muted }}>{toTime(row.start)} – {toTime(row.end)} · {row.end - row.start} phút dành riêng cho mình</p></div>
+    <div className="relative z-10 flex justify-center"><div className="-ml-0.5 flex h-8 w-8 items-center justify-center rounded-full" style={{ backgroundColor: theme.page, color: theme.art }}><Icon size={17} strokeWidth={1.3}/></div></div>
+    <div className="pl-4 sm:pl-9"><p className="font-serif text-[15px] italic sm:text-[18px]" style={{ color: theme.text }}>{heading}</p><p className="mt-2 text-[10px]" style={{ color: theme.muted }}>{toTime(row.start)} – {toTime(row.end)} · {row.end - row.start} phút</p></div>
   </div>;
 }
 
@@ -695,13 +736,13 @@ export default function App() {
     }
     const { placed, remaining } = autoScheduleTasks(floatingTasks, scheduledTasks, selectedDate);
     if (!placed.length) {
-      const feedback = `Không tìm được khoảng trống cho ngày ${shortDate(day)} trong khung 08:00–22:00. Thử ngày khác hoặc giảm thời lượng.`;
+      const feedback = 'Lịch hôm nay đã đủ kín, Hân nên để lại việc này cho ngày mai nhé!';
       setArrangeFeedback(feedback);
       return say(feedback, true);
     }
     setScheduledTasks((prev) => [...prev, ...placed]);
     setFloatingTasks(remaining);
-    const feedback = `Đã tự xếp ${placed.length} công việc vào ngày ${shortDate(day)}; ${remaining.length} việc vẫn trong danh sách chờ. Bấm dấu ✓ trên dòng thời gian để duyệt.`;
+    const feedback = `Đã tự xếp ${placed.length} công việc vào ngày ${shortDate(day)}; ${remaining.length} việc vẫn trong danh sách chờ.${remaining.length ? ' Lịch hôm nay đã đủ kín, Hân nên để lại việc này cho ngày mai nhé!' : ' Bấm dấu ✓ trên dòng thời gian để duyệt.'}`;
     setArrangeFeedback(feedback);
     say(feedback);
     if (typeof window.requestAnimationFrame === 'function') {
@@ -782,7 +823,7 @@ export default function App() {
           { label: 'Đã chốt hôm nay', value: String(approvedCount).padStart(2, '0') },
           { label: 'Đang chờ duyệt', value: String(pendingCount).padStart(2, '0') },
           { label: 'Đợi được sắp xếp', value: String(floatingTasks.length).padStart(2, '0') },
-          { label: 'Khung giờ xếp lịch', value: '08–22' },
+          { label: 'Khung giờ xếp lịch', value: '08–23' },
         ].map((info) => <div key={info.label} className="px-2 py-2 sm:px-5"><div className="font-serif text-[33px] leading-none tracking-[-.06em] sm:text-[39px]" style={{ color: theme.accent }}>{info.value}</div><p className="mt-3 text-[10px]" style={{ color: theme.muted }}>{info.label}</p></div>)}
       </div>
 
@@ -841,7 +882,7 @@ export default function App() {
             <button type="button" onClick={handleAutoSchedule} className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3.5 text-[12px] font-medium transition-all duration-300 hover:-translate-y-0.5" style={{ borderColor: theme.accent, color: theme.accent, backgroundColor: rgba(theme.accent, .08) }}><Sparkles size={17} /> Auto arrange · Tự xếp lịch</button>
             <button type="button" onClick={arrangeSelectedWeek} className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3.5 text-[12px] font-medium transition-colors duration-300 hover:opacity-70" style={{ borderColor: theme.line, color: theme.text }}><CalendarDays size={16} /> Auto arrange tuần · Luyện kỹ năng</button>
             {arrangeFeedback && <p aria-live="polite" className="mt-3 rounded-lg px-3 py-2.5 text-[11px] leading-[1.8]" style={{ color: theme.text, backgroundColor: theme.subtle }}>{arrangeFeedback}</p>}
-            <p className="mt-3 text-[10px] leading-[1.8]" style={{ color: theme.muted }}>Ưu tiên công việc quan trọng, tránh trùng lịch, tự né 12:00–14:00 và 17:00–19:00 mỗi ngày, đồng thời chừa 15 phút nghỉ khi có thể. Gợi ý sẽ chờ bạn duyệt.</p>
+            <p className="mt-3 text-[10px] leading-[1.8]" style={{ color: theme.muted }}>Ưu tiên công việc quan trọng; nghỉ trưa 12:00–13:30, ăn tối 18:30–19:30, không xếp sau 23:00. Bắt buộc nghỉ 15–30 phút sau mỗi việc, giới hạn 3,5 giờ mỗi buổi sáng/chiều.</p>
           </section>
           <section aria-label="Dự định tương lai" className="rounded-2xl border px-5 py-6 sm:px-7" style={{ borderColor: theme.line, backgroundColor: theme.panel }}>
             <p className="text-[9px] uppercase tracking-[.2em]" style={{ color: theme.muted }}>Ý tưởng cho ngày mai</p>
