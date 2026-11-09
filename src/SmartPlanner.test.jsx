@@ -284,14 +284,14 @@ describe('weekly skill practice and safe task edits', () => {
 
 describe('daily protected hours and automatic adjustments', () => {
   const overlaps = (a, from, to) => a.startTime < to && a.endTime > from
-  it('never arranges inside 12:00–14:00 or 17:00–19:00, even without existing tasks', () => {
-    expect(AUTO_BLOCKED_PERIODS).toEqual([{ start: 720, end: 840 }, { start: 1020, end: 1140 }])
+  it('never arranges inside 12:00–13:30 or 18:30–19:30, even without existing tasks', () => {
+    expect(AUTO_BLOCKED_PERIODS).toEqual([{ start: 720, end: 810 }, { start: 1110, end: 1170 }])
     const waiting = Array.from({ length: 12 }, (_, i) => floating('slot-' + i, 60))
     const result = autoScheduleTasks(waiting, [], date)
     expect(result.placed.length).toBeGreaterThan(0)
     for (const task of result.placed) {
-      expect(overlaps(task, '12:00', '14:00')).toBe(false)
-      expect(overlaps(task, '17:00', '19:00')).toBe(false)
+      expect(overlaps(task, '12:00', '13:30')).toBe(false)
+      expect(overlaps(task, '18:30', '19:30')).toBe(false)
     }
     expect(result.placed.length + result.remaining.length).toBe(waiting.length)
   })
@@ -299,8 +299,8 @@ describe('daily protected hours and automatic adjustments', () => {
   it('keeps a task in Waiting List when protected hours leave no adequate gap', () => {
     const reserved = [
       fixed('morning', '08:00', '12:00'),
-      fixed('afternoon', '14:00', '17:00'),
-      fixed('evening', '19:00', '22:00'),
+      fixed('afternoon', '13:30', '18:30'),
+      fixed('evening', '19:30', '23:00'),
     ]
     const result = autoScheduleTasks([floating('blocked', 30)], reserved, date)
     expect(result.placed).toHaveLength(0)
@@ -323,20 +323,20 @@ describe('daily protected hours and automatic adjustments', () => {
 
   it('preserves scheduled work not in conflict and all notes and approved statuses', () => {
     const kept = { ...floating('untouched', 30), origin: 'floating', date, startTime: '08:00', endTime: '08:30', status: 'approved', note: 'Important note' }
-    const clashing = { ...floating('clashing', 45), origin: 'floating', date, startTime: '17:10', endTime: '17:55', status: 'approved', note: 'Practice' }
+    const clashing = { ...floating('clashing', 45), origin: 'floating', date, startTime: '18:40', endTime: '19:25', status: 'approved', note: 'Practice' }
     const result = reflowForFixedTasks([kept, clashing], [], [fixed('new', '11:00', '12:00')])
     expect(result.scheduledTasks.find(x => x.id === 'untouched')).toEqual(kept)
     const second = result.scheduledTasks.find(x => x.id === 'clashing')
     expect(second.status).toBe('approved')
     expect(second.note).toBe('Practice')
-    expect(overlaps(second, '17:00', '19:00')).toBe(false)
+    expect(overlaps(second, '18:30', '19:30')).toBe(false)
   })
 
   it('returns impossible work to Waiting List without losing id, title, note, and duration', () => {
     const old = { ...floating('needs-relocation', 90), title: 'Luyện nói', note: 'Bài số 2', origin: 'floating',
       date, startTime: '09:00', endTime: '10:30', status: 'pending' }
     const added = [
-      fixed('a', '08:00', '12:00'), fixed('b', '14:00', '17:00'), fixed('c', '19:00', '22:00')
+      fixed('a', '08:00', '12:00'), fixed('b', '13:30', '18:30'), fixed('c', '19:30', '23:00')
     ]
     const result = reflowForFixedTasks([old], [], added)
     expect(result.moved).toBe(0)
